@@ -1,7 +1,7 @@
 {
   "id": "/AscentFinancials/",
   "name": "AscentFinancials",
-  "short_name": "Ascent$",
+  "short_name": "AscentFin",
   "description": "Salir de la deuda, con la consecuencia visible antes del gasto",
   "start_url": "./",
   "scope": "./",
