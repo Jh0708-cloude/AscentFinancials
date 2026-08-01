@@ -11,14 +11,15 @@
    6. En Firestore Database, crea la base en modo producción y pega
       las reglas que están en README.md.
 
-   Mientras esto siga con "PEGA_AQUI", la app funciona igual pero solo
-   guarda en este teléfono. Nada se rompe.
+   Ya configurado para el proyecto ascentfinancials-cfbe4.
+   La apiKey es pública por diseño: va en todo sitio web con Firebase.
+   Lo que protege los datos son las reglas de Firestore, no esta llave.
    ══════════════════════════════════════════════════════════════════ */
 window.AF_FIREBASE = {
-  apiKey:            "PEGA_AQUI",
-  authDomain:        "PEGA_AQUI.firebaseapp.com",
-  projectId:         "PEGA_AQUI",
-  storageBucket:     "PEGA_AQUI.firebasestorage.app",
-  messagingSenderId: "PEGA_AQUI",
-  appId:             "PEGA_AQUI"
+  apiKey:            "AIzaSyDUhgIhL-3OUwkeNJ7GPjKbuFcUH4MlYPw",
+  authDomain:        "ascentfinancials-cfbe4.firebaseapp.com",
+  projectId:         "ascentfinancials-cfbe4",
+  storageBucket:     "ascentfinancials-cfbe4.firebasestorage.app",
+  messagingSenderId: "396410705027",
+  appId:             "1:396410705027:web:55a16a1682cd0be32ab7b6"
 };
