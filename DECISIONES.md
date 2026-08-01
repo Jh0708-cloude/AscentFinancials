@@ -3,7 +3,8 @@
 > Documento de traspaso. Si una conversación se corta o empiezas una nueva,
 > este archivo es la fuente de verdad. Léelo antes de proponer cambios.
 >
-> Última actualización: 2026-08-01 (rev. 2) · Estado: **diseño cerrado, sin código**
+> Última actualización: 2026-08-01 (rev. 3) · Estado: **v1 en uso** — PWA
+> desplegada, Firebase conectado, paleta de AscentPeak aplicada.
 
 ---
 
@@ -18,6 +19,10 @@ La app tiene que mostrar la consecuencia *antes* del gasto, no el resumen
 después. Un resumen a fin de mes llega tarde y no cambia nada.
 
 - Repo nuevo: `Jh0708-cloude/AscentFinancials`
+- **Paleta heredada de AscentPeak**, no inventada: fondo `#17141D`, superficies
+  `#211C2B`/`#2A2436`, texto `#EDE9F5`, marca `#B39DE8`. El menta `#7BE3AE`
+  (el `--leg` de AscentPeak) se reserva para los avisos de "todo bien": si todo
+  es lavanda, el verde deja de significar algo. Un solo acento por pantalla.
 - Antecesor: `gastos` — un `index.html` con localStorage. **No se evoluciona,
   se reemplaza.** Su modelo mezclaba cuenta con categoría y no tenía ingresos,
   tarjetas ni cierre de mes. Sirve como referencia de UI, no de datos.
@@ -28,11 +33,16 @@ después. Un resumen a fin de mes llega tarde y no cambia nada.
 ## 2. Contexto del usuario
 
 - **Ingreso**: S/ 4500 brutos · **S/ 3820.96 líquidos** (julio 2026).
-- **Deuda revolvente real: S/ 7,551.65** (medida 01/08, no estimada). **Toda sin
-  interés.** El usuario la estimaba en 5,300 — subestimación del 42%, solo
+- **Saldo total de tarjetas: S/ 7,551.65** (medido 01/08, no estimado). **Todo sin
+  interés.** El usuario lo estimaba en 5,300 — subestimación del 42%, solo
   visible al juntar las tres tarjetas en un lado.
-- **Deuda en cuotas**: S/ 999 a 12 meses sin interés (~S/ 83/mes). Es otra cosa
-  y se cuenta aparte.
+- **Deuda revolvente real: S/ 6,552.65.** El saldo de la Amex **ya incluye las 12
+  cuotas pendientes** (verificado en la app de Interbank el 01/08). Contarlas
+  también en `af_cuota` inflaba el arrastre en S/ 999 y atrasaba la fecha de
+  salida 20 días.
+- **Deuda en cuotas**: Mercadopago, compra del 15/07/2026, **S/ 999.00 en 12 ×
+  S/ 83.25, TEA 0.0%**, cargada a la **Black Amex (Interbank)**. Primera cuota
+  11/08/2026, última 09/07/2027. Es otra cosa y se cuenta aparte.
 - **Junta**: 12 números, enero–diciembre 2026, S/ 1000/mes. **Es el número 12**,
   cobra ~S/ 12,000 en diciembre. **La junta NO paga la deuda** — tiene destino
   propio. La deuda se mata con el sueldo. Decisión del usuario, y el modelo la
@@ -45,12 +55,17 @@ después. Un resumen a fin de mes llega tarde y no cambia nada.
   ropa o cosas para el setup gamer por impulso.
 
 ### Tarjetas
-| Tarjeta | Banco | Saldo S/ | Línea | Uso | Corte | Vence | Uso real |
-|---|---|---|---|---|---|---|---|
-| VISA Oro | BCP | **3,856.18** | 11,740 | 32.8% | ~11 | ~5 | Consumo principal + disposiciones grandes |
-| Black Amex | Interbank | **3,695.47** | 16,720 | 22.1% | ~10 | ~5 | Fijos, Plin, disposiciones chicas |
-| VISA Clásica | BCP | 0 | 3,260 | 0% | ~11 | ~5 | Casi muerta (Uber, Steam, PSN) |
-| **Total** | | **7,551.65** | **31,720** | **23.8%** | | | |
+| Tarjeta | Banco | Saldo S/ | En cuotas | Revolvente | Línea | Uso | Corte | Vence | Uso real |
+|---|---|---|---|---|---|---|---|---|---|
+| VISA Oro | BCP | **3,856.18** | 0 | **3,856.18** | 11,740 | 32.8% | ~11 | ~5 | Consumo principal + disposiciones grandes |
+| Black Amex | Interbank | **3,695.47** | 999.00 | **2,696.47** | 16,720 | 22.1% | ~10 | ~5 | Fijos, Plin, disposiciones chicas |
+| VISA Clásica | BCP | 0 | 0 | 0 | 3,260 | 0% | ~11 | ~5 | Casi muerta (Uber, Steam, PSN) |
+| **Total** | | **7,551.65** | **999.00** | **6,552.65** | **31,720** | **23.8%** | | | |
+
+El **saldo** es lo que dice el banco y es lo que se guarda en `af_cta`: si la app
+mostrara otro número, nunca cuadraría contra el estado de cuenta. El
+**revolvente** es el saldo menos las cuotas pendientes, y es lo único que entra
+en la métrica de arrastre y en la fecha de salida.
 
 **Línea disponible: S/ 24,168** — 6.3 sueldos líquidos de pista. Ese es el motivo
 por el que nada ha forzado un alto: el límite estructural está tan lejos que el
@@ -132,7 +147,8 @@ dice si fue trago, taxi o comida — misma caja negra que el efectivo.
 ## 4. La métrica primaria
 
 > **Ratio de arrastre = deuda revolvente ÷ ingreso líquido**
-> Hoy: 7,551.65 ÷ 3,820.96 = **1.98 meses de sueldo ya gastados.**
+> Hoy: 6,552.65 ÷ 3,820.96 = **1.71 meses de sueldo ya gastados.**
+> (Antes de separar las cuotas marcaba 1.98 — el saldo de la Amex las incluía.)
 
 Se descartó **tasa de ahorro**: marcaría 0 durante meses y una métrica que no se
 mueve no enseña nada. Misma lección que la cintura en AscentPeak — la métrica
@@ -140,31 +156,30 @@ tiene que empezar en un número concreto y moverse desde el mes uno.
 
 ### El número de portada: la fecha de salida
 
-La deuda se paga **con el sueldo**. Fijos S/ 2,274 (junta incluida) sobre
-S/ 3,821 líquidos dejan **S/ 1,546.88 libres**. Lo que no se gasta, abona.
+La deuda se paga **con el sueldo**. Fijos S/ 2,274.33 (junta incluida) sobre
+S/ 3,820.96 líquidos dejan **S/ 1,546.63 libres**. Lo que no se gasta, abona.
 
-| Gasto discrecional/mes | Abona | Sin deuda en |
-|---|---|---|
-| 0 | 1,547 | 4.9 meses |
-| 300 | 1,247 | 6.1 meses |
-| **600** | **947** | **8.0 meses** |
-| 900 | 647 | 11.7 meses |
-| 1,200 | 347 | 21.8 meses |
+| Gasto discrecional/mes | Abona | Sin deuda en | Fecha |
+|---|---|---|---|
+| 0 | 1,547 | 4.2 meses | 08/12/2026 |
+| 300 | 1,247 | 5.3 meses | 08/01/2027 |
+| **600** | **947** | **6.9 meses** | **28/02/2027** |
+| 900 | 647 | 10.1 meses | 05/06/2027 |
+| 1,200 | 347 | 18.9 meses | 27/02/2028 |
 
 De ahí sale el único número grande de la portada:
 
-> **Sin deuda el 14 de marzo de 2027**
+> **Sin deuda el 8 de diciembre de 2026** (si el mes cierra en cero discrecional)
 
-**Se recalcula con cada gasto registrado.** La lectura es *"si el mes cierra
-así"*: abono = libre − gasto discrecional del mes, y la fecha sale de
-deuda ÷ abono. Un taxi de S/ 25 la mueve ~2 días; una salida de S/ 300, ~36.
-Eso es la consecuencia *antes* del gasto, que era el requisito original — y
-funciona mejor que una barra de presupuesto porque no es un límite abstracto
-impuesto por la app: es la propia libertad del usuario moviéndose.
+La curva no es lineal: los primeros 300 de gasto cuestan un mes; los últimos 300
+cuestan ocho. Por eso el escenario de 1,200 no se muestra como "un poco peor",
+sino como lo que es.
 
-**No se extrapola el gasto futuro.** Proyectar desde un finde suelto hacía saltar
-la fecha semanas por un solo gasto, y un número que salta deja de creerse. La
-fecha usa el gasto real del mes y se reinicia cada mes.
+**Se recalcula con cada gasto registrado.** Un taxi de S/ 25 mueve la fecha
+~0.7 días. Una salida de S/ 300 la mueve 9. Eso es la consecuencia *antes* del
+gasto, que era el requisito original — y funciona mejor que una barra de
+presupuesto porque no es un límite abstracto impuesto por la app: es la propia
+libertad del usuario moviéndose.
 
 **La tasa de ahorro entra en la fase 2**, cuando la deuda llegue a 0. No se puede
 ahorrar mientras se financia el mes pasado.
@@ -196,10 +211,10 @@ Sin dato real no hay fecha real, y una fecha inventada se rompe.
 | Gym Net | ~30.00 | Domingos y feriados |
 | Degravamen | 15.44 | **Revisar de qué crédito viene** |
 | BitePal (anual) | ~9.17 | S/ 110 al año |
-| Cuota 12 meses | ~83.00 | Vía `af_cuota`, no `af_fijo` |
-| **Total** | **~2274.08** | |
+| Cuota Mercadopago | 83.25 | Vía `af_cuota`, no `af_fijo`. Termina jul 2027 |
+| **Total** | **2,274.33** | |
 
-**Libre real: S/ 1,546.88 al mes.** Ese es el número de trabajo de la app.
+**Libre real: S/ 1,546.63 al mes.** Ese es el número de trabajo de la app.
 
 Aparte y variable: **API de Anthropic para AscentPeak** (~S/ 22/mes). Es costo de
 proyecto, no gasto personal.
@@ -221,7 +236,7 @@ no opina; muestra el número y la decisión es del usuario.
    Si un sábado no sale, no pierde: el siguiente finde sube solo.
 4. **Efectivo sin registrar** — lo que salió por disposición y todavía no tiene
    destino.
-5. **Ratio de arrastre** — deuda revolvente ÷ líquido. Hoy 1.98, meta 0.
+5. **Ratio de arrastre** — deuda revolvente ÷ líquido. Hoy 1.71, meta 0.
 
 ### 6.2 Cómo cuenta cada cosa
 
@@ -275,6 +290,7 @@ no opina; muestra el número y la decisión es del usuario.
 | **La Clásica se queda en cero** | Ya está en 0 y casi no se usa. Sirve como reserva real de emergencia con línea limpia; volver a usarla la convierte en una tercera fuente de arrastre. |
 | **La fecha de salida reemplaza a la barra de presupuesto** | Un límite es una regla ajena; una fecha es algo propio que se acerca o se aleja. Cada gasto la mueve, y ese movimiento se muestra en el momento del registro. |
 | **Cuotas separadas de revolvente** | La cuota tiene fecha de término y se achica sola; lo revolvente no. Mezclarlas es el error del contador de series de AscentPeak. |
+| **El saldo del banco manda; el arrastre resta** | `af_cta` guarda el saldo tal cual lo dice el banco (Amex: 3,695.47) o nunca cuadra contra el estado de cuenta. La métrica resta aparte las cuotas pendientes. Guardar el saldo ya "limpio" habría escondido el desfase en vez de explicarlo. |
 | **Bolsa mensual, no sobres semanales** | "No sé si voy a gastar el sábado". Con bolsa mensual, el finde que no sale sube el siguiente. Premia quedarse en casa sin felicitar a nadie. |
 | **Cumpleaños y regalos se agendan** | Tienen fecha conocida. Se restan de la bolsa **antes** de repartirla. Así no obligan a ruletear. |
 | **Compras grandes tienen 48 h, no bloqueo** | Ropa y setup son de S/ 200-800 y se comen un finde de un golpe. Si superan el tope, la app las **agenda** para el finde siguiente. El impulso caduca; la necesidad real no. |
@@ -329,9 +345,14 @@ historia.
 
 ### `af_cuota` — deuda en cuotas
 ```
-{ id, n, cTotal, nCuotas, pagadas, cMes, cta, desde, tea }
+{ id, n, cTotal, nCuotas, pagadas, cMes, cta, desde, hasta, dia, tea, fCompra }
 ```
-Alimenta los fijos del mes. **No entra en la métrica de arrastre.**
+Alimenta los fijos del mes. **No entra en la métrica de arrastre**, y como el
+saldo de `cta` sí las incluye, el arrastre las resta con `cuotasPendC(cta)`.
+`hasta` existe porque la fecha de término es la mitad del argumento para
+separarla del revolvente: se muestra en la fila (*"hasta julio 2027"*).
+
+Hoy: `q01` Mercadopago · 999.00 · 12 × 83.25 · TEA 0 · Amex · 08/2026–07/2027.
 
 ### `af_junta`
 ```
@@ -399,12 +420,18 @@ Deriva de las disposiciones. **Es el corazón del modelo**, porque ahí vive el
    mismo día. La plata sin destino se la lleva el evento más cercano.
 7. **La disposición nunca cuenta como gasto**, y el gasto en efectivo nunca puede
    exceder el saldo pendiente registrado.
+8. **El arrastre resta siempre las cuotas pendientes de esa misma tarjeta.**
+   Vive en `deudaRevolvente()`, no en la carga de datos: si mañana pasa otra
+   compra a cuotas, la resta se ajusta sola y no hay que acordarse de nada.
+   Cuando el saldo del banco y el arrastre difieren, la fila lo dice en voz
+   alta (*"incluye S/ 999.00 en cuotas · fuera del arrastre"*): dos números
+   distintos en pantalla sin explicación es peor que un número malo.
 
 ---
 
 ## 10. Roadmap
 
-### v1 — lo básico y factible
+### v1 — lo básico y factible · **hecho**
 1. Registro en tres toques con cuenta y vía prellenadas
 2. Fijos cargados una vez, se descuentan solos, con costo anual visible
 3. Eventos con fecha (cumpleaños, regalos)
@@ -416,7 +443,7 @@ Deriva de las disposiciones. **Es el corazón del modelo**, porque ahí vive el
 Nada más. Sin gráficos, sin proyecciones, sin IA.
 
 ### v2
-- Firebase (mismo patrón que AscentPeak: Auth Google + Firestore)
+- ~~Firebase (mismo patrón que AscentPeak: Auth Google + Firestore)~~ **hecho**
 - Importar estados de cuenta (`src:"importado"`) y reconciliar contra lo manual
 - Reconciliación de Plin: *"PLIN.TANIA 500 el viernes 31, ¿qué fue?"*
 - Cobro a terceros (`comp`): cuánto le deben
@@ -471,13 +498,18 @@ usuario. El modelo no los ofrece como fuente de abono en ningún cálculo.
 ## 11. Lecciones aprendidas
 
 - **Una métrica que no se mueve no enseña nada.** Tasa de ahorro habría marcado
-  cero durante meses. El ratio de arrastre empieza en 1.39 y se mueve solo.
+  cero durante meses. El ratio de arrastre empieza en 1.71 y se mueve solo.
 - **Modelar el comportamiento real, no el ideal.** El ruleteo, las invitaciones y
   las disposiciones no son casos borde: son la mayor parte del dinero. Se
   modelan explícitamente o la app mide un mes que no existe.
 - **Mirar de dónde sale el número antes de contarlo.** El estado de cuenta
   mostraba S/ 1,823 de gasto mensual. El real pasa de S/ 10,000. Todo lo demás
   estaba en efectivo y Plin.
+- **Un número correcto en dos lugares se cuenta dos veces.** Los S/ 999 estaban
+  en `af_cuota` y también dentro del saldo de la Amex. El arrastre marcaba 1.98
+  en vez de 1.71 y la fecha de salida se atrasaba 20 días. Antes de restar o
+  sumar un saldo, preguntar qué incluye — es la misma lección de mirar de dónde
+  sale el número, aplicada al revés.
 - **Sin interés no significa sin costo.** El ruleteo no cuesta soles: cuesta la
   única señal de que el mes no cerró.
 - **Un límite inventado se revienta la primera semana.** Los números de esta app
