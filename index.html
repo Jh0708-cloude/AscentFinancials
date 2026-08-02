@@ -127,6 +127,15 @@ nav{position:fixed;bottom:0;left:0;right:0;background:rgba(15,20,23,.94);
 .nav-b.on{color:var(--salida)}
 .nav-b svg{display:block;margin:0 auto 3px;width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 
+.acciones{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.acciones button{border:1px solid var(--linea);border-radius:9px;padding:6px 12px;font-size:12px;color:var(--tiza);background:transparent}
+.acciones button.p{border-color:var(--salida);color:var(--salida)}
+.rev-fila{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
+  border-top:1px solid var(--linea);padding:9px 0;font-size:13px;color:var(--tiza)}
+.rev-fila .acciones{margin-top:0}
+.chips{display:flex;gap:6px;margin-bottom:6px}
+.chips button{flex:1;border:1px solid var(--linea);border-radius:9px;padding:6px 0;font-size:12px;color:var(--humo);background:transparent}
+.chips button.on{border-color:var(--salida);color:var(--salida)}
 .otra-cosa{margin-top:14px;text-align:center;font-size:12px;color:var(--tenue)}
 .otra-cosa button{color:var(--salida);font-size:12px}
 .fab{position:fixed;right:calc(50% - 240px + 18px);bottom:86px;width:56px;height:56px;border-radius:50%;
@@ -262,6 +271,7 @@ const SEMILLA = {
   junta:{n:"Junta 2026", cMesC:100000, numeros:12, miTurno:12, pagadas:7, cRecibirC:1200000, fEstimada:"2026-12"},
   eventos:[],
   deudas:[],
+  sinGasto:[],
   movs:[],
   meses:{}
 };
@@ -292,6 +302,8 @@ function cargar(){
       const s = JSON.parse(raw);
       // migración blanda: campos nuevos no rompen datos viejos
       s.eventos = s.eventos || []; s.deudas = s.deudas || []; s.meses = s.meses || {};
+      s.sinGasto = s.sinGasto || [];
+      s.cfg.autoDesde = s.cfg.autoDesde || hoyISO();   // los cargos automáticos arrancan hoy, no hacia atrás
       // q01 estaba cargada a la Oro y sin fecha de término; el detalle del banco dice Interbank
       (s.cuotas||[]).forEach(q=>{ if(q.id==="q01"){ q.n="Mercadopago"; q.cta="amex";
         q.hasta=q.hasta||"2027-07"; q.dia=q.dia||11; q.tea=q.tea||0; q.fCompra=q.fCompra||"2026-07-15"; } });
@@ -312,6 +324,7 @@ function nuevoId(){
 /* ══════════════════════════════════════════════════════════════════
    AYUDANTES
    ══════════════════════════════════════════════════════════════════ */
+const DIAS_N = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
 const MESES_N = ["enero","febrero","marzo","abril","mayo","junio","julio",
                  "agosto","septiembre","octubre","noviembre","diciembre"];
 
@@ -329,8 +342,11 @@ function aC(txt){
   return Math.round(n*100);
 }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function hoyISO(){ const d=new Date(); return d.toISOString().slice(0,10); }
-function claveMes(d){ return d.toISOString().slice(0,7); }
+function isoDe(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function hoyISO(){ return isoDe(new Date()); }
+function claveMes(d){ return isoDe(d).slice(0,7); }
+function diasDelMes(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0).getDate(); }
+function menosDias(n){ const d=new Date(); d.setDate(d.getDate()-n); return d; }
 function delISO(iso){ const [a,m,d]=iso.split("-").map(Number); return new Date(a,m-1,d); }
 function fechaLarga(d){
   return d.getDate()+" de "+MESES_N[d.getMonth()]+" de "+d.getFullYear();
@@ -425,6 +441,59 @@ function efectivoPendiente(){
   const e = S.ctas.find(c=>c.tipo==="efectivo");
   return e ? Math.max(0, s[e.id]||0) : 0;
 }
+/* ── Cargos automáticos ───────────────────────────────────────────
+   El fijo ya se descuenta del libre como bloque, pero el banco lo carga
+   a una tarjeta. Sin movimiento, el saldo de la app se queda por debajo
+   del real y el arrastre se ve mejor de lo que es.
+   No se aplican los que salen de efectivo: ese saldo depende de una
+   disposición registrada (baranda 7).
+   Tampoco se aplica nada anterior a `autoDesde`: los saldos iniciales se
+   midieron ese día y ya incluían los cargos previos. */
+function aplicarFijos(){
+  const hoy = new Date(), mk = claveMes(hoy), diaHoy = hoy.getDate();
+  if(S.meses[mk] && S.meses[mk].cerrado) return 0;
+  const desde = S.cfg.autoDesde || hoyISO();
+  let n = 0;
+  S.fijos.forEach(f=>{
+    if(f.estado === "cancelado") return;
+    const c = cta(f.cta);
+    if(!c || c.tipo === "efectivo") return;
+    const dia = Math.min(f.dia||1, diasDelMes(hoy));
+    if(diaHoy < dia) return;
+    const d = mk+"-"+String(dia).padStart(2,"0");
+    if(d <= desde) return;
+    if(S.movs.some(m=>m.fijoId===f.id && m.d.slice(0,7)===mk)) return;
+    S.movs.push({ id:nuevoId(), d, ts:Date.now(), cC:f.cC, cur:S.cfg.cur,
+      tipo: f.ahorro ? "ahorro" : "gasto", cat:f.cat, cta:f.cta, cta2:null,
+      via:"transferencia", inv:0, ext:0, src:"auto", fijoId:f.id, rev:0, nota:f.n });
+    n++;
+  });
+  if(n) guardar();
+  return n;
+}
+function porRevisar(mk){ return S.movs.filter(m=>m.fijoId && !m.rev && m.d.slice(0,7)===mk); }
+
+/* Días de finde ya pasados sin un solo registro. Un finde en cero real y
+   uno sin anotar se ven igual en pantalla, y son lo contrario. */
+function findesSinRegistro(){
+  const out=[], desde = S.cfg.autoDesde || hoyISO();
+  for(let i=1;i<=7;i++){
+    const d = menosDias(i), dw = d.getDay();
+    if(dw!==5 && dw!==6 && dw!==0) continue;
+    const iso = isoDe(d);
+    if(iso < desde) continue;
+    if((S.sinGasto||[]).includes(iso)) continue;
+    if(S.movs.some(m=>m.d===iso && m.src!=="auto" && (m.tipo==="gasto"||m.tipo==="disposicion"))) continue;
+    out.push(iso);
+  }
+  return out;
+}
+function deudasVencidas(){
+  const hoy = new Date();
+  return (S.deudas||[]).filter(x=>x.sentido==="meDeben" && x.estado==="abierto" &&
+    Math.round((hoy - delISO(x.desde))/86400000) >= 30);
+}
+
 function fijosMesC(){
   return S.fijos.filter(f=>f.estado!=="cancelado").reduce((t,f)=>t+f.cC,0);
 }
@@ -461,17 +530,37 @@ function invitadoC(mesKey){
    abono = libre − gasto discrecional del mes. deuda / abono = meses.
    extraC simula un gasto que todavía no se guardó, para mostrar la
    consecuencia ANTES de gastar. */
+/* Ritmo mensual: lo que abonas mes tras mes. Los eventos NO entran acá.
+   Un cumpleaños de 300 sale una vez; restarlo del ritmo equivale a decir
+   que tu papá cumple años todos los meses hasta que salgas de deuda. */
+function ritmoC(mesKey){
+  return S.cfg.liquidoC - fijosMesC() - cuotasMesC() - gastadoC(mesKey);
+}
 function fechaSalida(extraC){
   extraC = extraC || 0;
-  const mk = claveMes(new Date());
-  const deuda = deudaRevolvente();
-  const abono = libreC(mk) - gastadoC(mk) - extraC;
-  if(deuda <= 0) return {ok:true, libre:true, abonoC:abono};
-  if(abono <= 0) return {ok:false, abonoC:abono};
-  const meses = deuda / abono;
-  const dias = meses * 30.44;
+  const hoy = new Date(), mk = claveMes(hoy);
+  let deuda = deudaRevolvente();
+  const ritmo = ritmoC(mk) - extraC;
+  const abono0 = ritmo - eventosMesC(mk);
+  if(deuda <= 0) return {ok:true, libre:true, abonoC:abono0};
+  if(ritmo <= 0) return {ok:false, abonoC:abono0};
+
+  /* Simulación mes a mes: cada evento se descuenta el mes que le toca y
+     nunca más. Antes se restaba de todos los meses y una salida de 600
+     atrasaba la fecha 82 días en vez de 19. */
+  let dias = 0, m = 0;
+  while(deuda > 0 && m < 600){
+    const d = new Date(hoy.getFullYear(), hoy.getMonth()+m, 1);
+    const abono = ritmo - eventosMesC(claveMes(d));
+    if(abono > 0){
+      if(deuda <= abono){ dias += (deuda/abono)*30.44; deuda = 0; break; }
+      deuda -= abono;
+    }
+    dias += 30.44; m++;
+  }
+  if(deuda > 0) return {ok:false, abonoC:abono0};
   const f = new Date(); f.setDate(f.getDate() + Math.round(dias));
-  return {ok:true, fecha:f, meses, dias, abonoC:abono, deudaC:deuda};
+  return {ok:true, fecha:f, meses:dias/30.44, dias, abonoC:abono0, deudaC:deudaRevolvente()};
 }
 
 /* Ruleteo: disposición y pago sobre la MISMA cuenta en ≤3 días.
@@ -506,7 +595,9 @@ function render(){
        ui.vista==="fijos" ? vistaFijos() : vistaAjustes()) +
     '</div>' +
     barraNav() +
-    '<button class="fab" onclick="abrirRegistro()" aria-label="Registrar movimiento">+</button>';
+    /* en Ajustes el FAB tapaba los botones de datos */
+    (ui.vista==="ajustes" ? "" :
+      '<button class="fab" onclick="abrirRegistro()" aria-label="Registrar movimiento">+</button>');
   renderCapa();
   if(typeof pintarNube === "function") pintarNube();
 }
@@ -596,6 +687,33 @@ function vistaHoy(){
   if(disp<0){
     avisos += '<div class="aviso-bloque rojo">Te pasaste <b>'+fmt(-disp)+'</b> de lo libre del mes. '+
       'Todo lo que gastes desde acá sale del abono.</div>';
+  }
+  findesSinRegistro().slice(0,2).forEach(iso=>{
+    const d = delISO(iso);
+    avisos += '<div class="aviso-bloque">El '+DIAS_N[d.getDay()]+' '+d.getDate()+' no anotaste nada. ¿Fue así?'+
+      '<div class="acciones">'+
+        '<button onclick="marcarSinGasto(\''+iso+'\')">No gasté</button>'+
+        '<button class="p" onclick="abrirRegistro(\'gasto\',null,\''+iso+'\')">Anotar</button>'+
+      '</div></div>';
+  });
+  deudasVencidas().forEach(x=>{
+    const dias = Math.round((new Date() - delISO(x.desde))/86400000);
+    avisos += '<div class="aviso-bloque ambar">Le cubriste <b>'+fmt(x.cC)+'</b> a '+esc(x.n)+' hace '+dias+' días y no lo has cobrado.'+
+      '<div class="acciones">'+
+        '<button onclick="cobrarDeuda(\''+x.id+'\')">Ya me pagó</button>'+
+        '<button class="p" onclick="soltarDeuda(\''+x.id+'\')">Soltarlo</button>'+
+      '</div></div>';
+  });
+  const rev = porRevisar(mk);
+  if(rev.length){
+    avisos += '<div class="aviso-bloque"><b>'+rev.length+(rev.length===1?' cargo automático':' cargos automáticos')+' este mes.</b> '+
+      'Confirma contra el banco: un cobro repetido se ve acá, no en diciembre.'+
+      rev.map(m=>'<div class="rev-fila"><span>'+esc(m.nota||"")+' · '+fmt(m.cC)+'</span>'+
+        '<span class="acciones">'+
+          '<button onclick="fijoOk(\''+m.id+'\')">Llegó</button>'+
+          '<button onclick="fijoNo(\''+m.id+'\')">No llegó</button>'+
+          '<button onclick="fijoOtro(\''+m.id+'\')">Distinto</button>'+
+        '</span></div>').join("")+'</div>';
   }
 
   /* tarjetas — nunca se muestra la línea disponible como número (baranda 6c) */
@@ -844,9 +962,19 @@ function hojaRegistro(){
             '<option value="'+v+'"'+(v===ui.via?" selected":"")+'>'+v+'</option>').join("")+
         '</select></div>'+
       '</div>'+
-      '<div class="marca-fila" onclick="ui.inv=ui.inv?0:1;renderCapa();recuperar()">'+
+      '<div class="marca-fila" onclick="marcar(\'inv\')">'+
         '<div class="tick '+(ui.inv?"on":"")+'">'+(ui.inv?"✓":"")+'</div>'+
-        '<span style="'+(ui.inv?"color:var(--alerta)":"")+'">Invité yo</span></div>';
+        '<span style="'+(ui.inv?"color:var(--alerta)":"")+'">Invité yo · no espero nada de vuelta</span></div>'+
+      '<div class="marca-fila" onclick="marcar(\'deb\')">'+
+        '<div class="tick '+(ui.deb?"on":"")+'">'+(ui.deb?"✓":"")+'</div>'+
+        '<span style="'+(ui.deb?"color:var(--alerta)":"")+'">Me deben parte</span></div>'+
+      (ui.deb ?
+        '<div class="dos">'+
+          '<div class="campo"><label>Quién</label><input id="f-quien" type="text" placeholder="nombre"></div>'+
+          '<div class="campo"><label>Cuánto te deben</label><input id="f-debc" class="num" type="number" inputmode="decimal" step="0.01" placeholder="0.00"></div>'+
+        '</div>'+
+        '<div class="mini">El gasto se anota completo y sigue contando como tuyo: un cobro que quizá no ocurra no puede bajarte el mes. A los 30 días sin cobrar, la app te pregunta si lo sueltas.</div>'
+        : '');
   } else if(t==="pago"){
     cuerpo =
       '<div class="dos">'+
@@ -864,7 +992,7 @@ function hojaRegistro(){
   } else {
     cuerpo =
       '<div class="campo"><label>Entra a</label><select id="f-cta" onchange="ui.cta=this.value">'+opts(noCred,ui.cta)+'</select></div>'+
-      '<div class="marca-fila" onclick="ui.ext=ui.ext?0:1;renderCapa();recuperar()">'+
+      '<div class="marca-fila" onclick="marcar(\'ext\')">'+
         '<div class="tick '+(ui.ext?"on":"")+'">'+(ui.ext?"✓":"")+'</div>'+
         '<span style="'+(ui.ext?"color:var(--alerta)":"")+'">Extraordinario (CTS, gratificación, junta)</span></div>'+
       (ui.ext?'<div class="mini">Un ingreso extraordinario no entra al disponible sin reparto. Al guardarlo, la app te pregunta a qué va.</div>':'');
@@ -879,7 +1007,10 @@ function hojaRegistro(){
     '<div class="eco" id="eco"></div>'+
     cuerpo+
     '<div class="dos" style="margin-top:2px">'+
-      '<div class="campo"><label>Cuándo pasó</label><input id="f-fecha" type="date" value="'+hoyISO()+'"></div>'+
+      '<div class="campo"><label>Cuándo pasó</label>'+
+        '<div class="chips">'+[["Hoy",0],["Ayer",1],["Antier",2]].map(([n,k])=>
+          '<button class="'+(ui.fecha===isoDe(menosDias(k))?"on":"")+'" onclick="ponFecha(\''+isoDe(menosDias(k))+'\')">'+n+'</button>').join("")+'</div>'+
+        '<input id="f-fecha" type="date" value="'+(ui.fecha||hoyISO())+'" onchange="ui.fecha=this.value"></div>'+
       '<div class="campo"><label>Nota</label><input id="f-nota" type="text" placeholder="opcional"></div>'+
     '</div>'+
     '<button class="btn" onclick="guardarMov()">Guardar</button>'+
@@ -995,8 +1126,9 @@ function hojaLiquido(){
 window.irA = v => { ui.vista=v; render(); window.scrollTo(0,0); };
 window.cerrarHoja = () => { ui.hoja=null; ui.editId=null; renderCapa(); };
 
-window.abrirRegistro = (tipo, ctaId) => {
-  ui.hoja="registro"; ui.tipo = tipo || "gasto"; ui.inv=0; ui.ext=0;
+window.abrirRegistro = (tipo, ctaId, fecha) => {
+  ui.hoja="registro"; ui.tipo = tipo || "gasto"; ui.inv=0; ui.ext=0; ui.deb=0;
+  ui.fecha = fecha || hoyISO();
   const cred = S.ctas.find(c=>c.tipo==="credito"&&c.activa);
   const noCred = S.ctas.find(c=>c.tipo!=="credito"&&c.activa);
   ui.cat = ui.cat || (S.cfg.cats[0]||{}).id;
@@ -1026,7 +1158,26 @@ window.ponCat = id => {
   const m=document.getElementById("monto"); if(m && v){ m.value=v; ecoFecha(); }
   const nn=document.getElementById("f-nota"); if(nn && n) nn.value=n;
 };
-window.recuperar = () => {};   // los toggles ya re-renderizan con estado en ui
+window.ponFecha = iso => {
+  ui.fecha = iso;
+  const e = document.getElementById("f-fecha"); if(e) e.value = iso;
+  marcar(null);
+};
+/* Al marcar una casilla la hoja se vuelve a dibujar. Antes eso borraba el
+   monto ya escrito: teclear dos veces el mismo número es exactamente el
+   tipo de fricción que vacía la app en dos semanas. */
+window.marcar = campo => {
+  const g = id => { const e=document.getElementById(id); return e ? e.value : null; };
+  const prev = { monto:g("monto"), nota:g("f-nota"), quien:g("f-quien"), debc:g("f-debc") };
+  if(campo==="inv"){ ui.inv = ui.inv?0:1; if(ui.inv) ui.deb=0; }
+  if(campo==="deb"){ ui.deb = ui.deb?0:1; if(ui.deb) ui.inv=0; }
+  if(campo==="ext"){ ui.ext = ui.ext?0:1; }
+  renderCapa();
+  const p = (id,v) => { const e=document.getElementById(id); if(e && v!=null && v!=="") e.value=v; };
+  p("monto",prev.monto); p("f-nota",prev.nota); p("f-quien",prev.quien); p("f-debc",prev.debc);
+  ecoFecha();
+};
+window.recuperar = () => marcar(null);
 
 /* Prellenado: la última cuenta y vía usadas en esa categoría (tres toques). */
 function recordarCta(catId){
@@ -1043,7 +1194,7 @@ function recordarVia(catId){
 window.guardarMov = () => {
   const c = aC(document.getElementById("monto").value);
   if(c<=0){ toast("Falta el monto."); return; }
-  const d = document.getElementById("f-fecha").value || hoyISO();
+  const d = document.getElementById("f-fecha").value || ui.fecha || hoyISO();
   const nota = (document.getElementById("f-nota").value||"").trim();
   const sel = id => { const e=document.getElementById(id); return e ? e.value : null; };
   const origen = sel("f-cta") || ui.cta;
@@ -1074,6 +1225,15 @@ window.guardarMov = () => {
     ext: ui.tipo==="ingreso" ? ui.ext : 0,
     src:"manual", nota
   };
+  /* "Me deben" no baja el gasto: lo anota completo y abre el pendiente aparte.
+     Si descontara por adelantado, un cobro que nunca ocurre esconde gasto. */
+  if(ui.tipo==="gasto" && ui.deb){
+    const quien = (sel("f-quien")||"").trim() || "alguien";
+    const debC = aC(sel("f-debc")) || Math.round(c/2);
+    mov.debC = debC; mov.quien = quien;
+    S.deudas.push({ id:nuevoId(), n:quien, cC:debC, sentido:"meDeben",
+      motivo: nota || (ui.cat||""), desde:d, estado:"abierto", movId:mov.id });
+  }
   S.movs.push(mov);
   guardar();
 
@@ -1092,7 +1252,50 @@ window.guardarMov = () => {
   } else if(ui.tipo==="ingreso" && ui.ext){
     msg = "Ingreso extraordinario. Decide su reparto antes de gastarlo.";
   }
-  cerrarHoja(); render(); toast(msg);
+  cerrarHoja(); render(); toast(msg, mov.id);
+};
+
+window.deshacer = id => {
+  S.movs = S.movs.filter(m=>m.id!==id);
+  S.deudas = (S.deudas||[]).filter(x=>x.movId!==id);
+  guardar(); render(); toast("Deshecho.");
+};
+
+/* Revisión de cargos automáticos */
+window.fijoOk  = id => { const m=S.movs.find(x=>x.id===id); if(m){ m.rev=1; guardar(); render(); } };
+window.fijoNo  = id => {
+  S.movs = S.movs.filter(x=>x.id!==id); guardar(); render();
+  toast("Quitado. Si el banco lo cobra después, lo anotas a mano.");
+};
+window.fijoOtro = id => {
+  const m = S.movs.find(x=>x.id===id); if(!m) return;
+  const v = prompt("¿Cuánto cobraron en realidad?", (m.cC/100).toFixed(2));
+  if(v===null) return;
+  const c = aC(v); if(c<=0) return;
+  m.cC=c; m.rev=1; m.ed=1; guardar(); render();
+  toast("Corregido. Si el cobro se repitió, reclámalo antes del próximo corte.");
+};
+
+/* Cobros a personas */
+window.cobrarDeuda = id => {
+  const x = (S.deudas||[]).find(y=>y.id===id); if(!x) return;
+  const m = S.movs.find(y=>y.id===x.movId);
+  const destino = (m && m.cta) || (S.ctas.find(c=>c.tipo!=="credito"&&c.activa)||{}).id;
+  S.movs.push({ id:nuevoId(), d:hoyISO(), ts:Date.now(), cC:x.cC, cur:S.cfg.cur,
+    tipo:"ingreso", cat:null, cta:destino, cta2:null, via:null, inv:0, ext:0,
+    src:"manual", nota:"Devolución de "+x.n });
+  x.estado="cobrado"; guardar(); render(); toast("Cobrado. Vuelve a tu saldo.");
+};
+window.soltarDeuda = id => {
+  const x = (S.deudas||[]).find(y=>y.id===id); if(!x) return;
+  const m = S.movs.find(y=>y.id===x.movId);
+  if(m) m.inv = 1;
+  x.estado="soltada"; guardar(); render();
+  toast("Soltado. Cuenta como invitación, no como plata por cobrar.");
+};
+window.marcarSinGasto = iso => {
+  S.sinGasto = S.sinGasto || []; S.sinGasto.push(iso);
+  guardar(); render(); toast("Anotado: ese día cerró en cero.");
 };
 
 window.borrarMov = id => {
@@ -1203,11 +1406,13 @@ window.borrarTodo = () => {
 };
 
 let tToast;
-function toast(html){
+function toast(html, undoId){
   const el = document.getElementById("brindis");
-  el.innerHTML = '<div class="brindis">'+html+'</div>';
+  el.innerHTML = '<div class="brindis">'+html+
+    (undoId ? ' <button onclick="deshacer(\''+undoId+'\')" style="color:var(--salida);text-decoration:underline;font-size:13px;margin-left:6px">Deshacer</button>' : '')+
+    '</div>';
   clearTimeout(tToast);
-  tToast = setTimeout(()=>{ el.innerHTML=""; }, 3400);
+  tToast = setTimeout(()=>{ el.innerHTML=""; }, undoId ? 6000 : 3400);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1220,7 +1425,7 @@ function toast(html){
    Sin configuración de Firebase, todo esto queda apagado y la app
    sigue funcionando solo con el almacenamiento del teléfono.
    ══════════════════════════════════════════════════════════════════ */
-const TAJADAS = ["cfg","ctas","movs","fijos","cuotas","junta","eventos","deudas","meses"];
+const TAJADAS = ["cfg","ctas","movs","fijos","cuotas","junta","eventos","deudas","sinGasto","meses"];
 const LL_HUELLA = "af_huellas";     // lo último subido
 const LL_REMOTO = "af_remoto";      // marca de tiempo de lo último bajado
 let FBU = null, ocupado = false, temporizador = null;
@@ -1282,7 +1487,7 @@ async function bajar(){
     });
     escribirMapa(LL_REMOTO, rem); escribirMapa(LL_HUELLA, hs);
     if(cambio){
-      S.eventos = S.eventos||[]; S.deudas = S.deudas||[]; S.meses = S.meses||{};
+      S.eventos = S.eventos||[]; S.deudas = S.deudas||[]; S.meses = S.meses||{}; S.sinGasto = S.sinGasto||[];
       localStorage.setItem(LLAVE, JSON.stringify(S));
       render();
       toast("Datos actualizados desde la nube.");
@@ -1338,6 +1543,13 @@ if("serviceWorker" in navigator){
     navigator.serviceWorker.register("sw.js").catch(e=>console.warn("SW no registrado", e));
   });
 }
+
+/* Los cargos automáticos se aplican al abrir, nunca hacia atrás del día
+   en que se midieron los saldos. */
+S.cfg.autoDesde = S.cfg.autoDesde || hoyISO();
+S.sinGasto = S.sinGasto || [];
+guardar();
+aplicarFijos();
 
 render();
 </script>
