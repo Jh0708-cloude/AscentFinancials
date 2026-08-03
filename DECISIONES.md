@@ -3,8 +3,10 @@
 > Documento de traspaso. Si una conversación se corta o empiezas una nueva,
 > este archivo es la fuente de verdad. Léelo antes de proponer cambios.
 >
-> Última actualización: 2026-08-01 (rev. 3) · Estado: **v1 en uso** — PWA
-> desplegada, Firebase conectado, paleta de AscentPeak aplicada.
+> Última actualización: 2026-08-03 (rev. 4) · Estado: **v1 en uso** — PWA
+> desplegada, Firebase conectado, paleta de AscentPeak aplicada. Rev 4 añade
+> el detalle de persona en "me deben" y la vista "quién te debe", y reconcilia
+> el modelo de `af_deuda` con el código real (`cC`/`movId`/`detalle`).
 
 ---
 
@@ -331,9 +333,13 @@ Cero valores personales en el código. Todo lo que sea de Jhair vive acá.
 - `d` fecha del hecho · `ts` cuándo se registró
 - `cta` origen real · `cta2` destino (pagos y traslados)
 - `via` = yape · plin · fisica · efectivo · transferencia
-- `inv:1` invitación · `comp` por cobrar a terceros · `ext:1` ingreso extraordinario
+- `inv:1` invitación · `comp` reembolso de un gasto compartido (mitad del hermano) · `ext:1` ingreso extraordinario
 - `src` = manual · importado · sugerido
 - `ed:1` corregido a mano · `link` enlaza el Plin con el consumo ya anotado
+- **"Me deben parte" NO usa `comp`.** Escribe en `af_deuda` (ver abajo) y espeja
+  `debC`, `quien` y `quienDetalle` en el movimiento. `comp` es solo para los
+  compartidos fijos (DirecTV, celular), donde el cargo sale entero y el hermano
+  devuelve la mitad.
 
 ### `af_fijo` — recurrentes
 ```
@@ -363,12 +369,38 @@ disponible ni gasto perdido.
 
 ### `af_deuda` — deudas con personas
 ```
-{ id, n, c, sentido:debo|meDeben, motivo, desde, estado, movPago }
+{ id, n, detalle, cC, sentido:debo|meDeben, motivo, desde,
+  estado:abierto|cobrado|soltada, movId }
 ```
 Existe porque los S/ 2,500 que se debían a la madre eran una obligación real e
 **invisible para los estados de cuenta**. Sin esto, la app reporta una situación
 mejor que la real. Distinto de `comp` en `af_mov`, que es un reembolso puntual
 por un consumo compartido.
+
+Los montos son **céntimos enteros** (`cC`), como todo el modelo, y `movId`
+enlaza con el movimiento que originó la deuda — no `c`/`movPago`, que era como lo
+decía la rev anterior antes de escribir el código.
+
+**Registro (`estado:"abierto"`):** el toggle "Me deben parte" en la hoja de gasto
+anota el gasto **completo** (sigue contando como tuyo) y abre una `af_deuda`
+aparte. Un cobro que quizá no ocurra no puede bajarte el mes. Campos que se
+llenan ahí: `n` (quién) y `detalle`.
+
+**`detalle` es de la persona, no del gasto.** Es la sub-línea chica bajo el
+nombre ("amiga de Karla", "del vóley") para reconocer quién es. Se escribe una
+vez y se **autocompleta** solo cuando vuelves a teclear ese nombre
+(`detalleDe(nombre)` busca la última deuda con ese nombre que tenga detalle).
+Siempre editable. No hay colección de personas: el directorio se deriva del
+historial, así no se agrega superficie de sync por algo que ya vive en los datos.
+
+**La vista "quién te debe":** bloque tocable en la portada (*"Te deben · S/ X ·
+N personas"*, solo si hay algo abierto) que abre una hoja agrupada por persona
+(`deudasPorPersona()`, case-insensitive, hereda el detalle entre movimientos del
+mismo nombre). Cada persona muestra su total y sus movimientos con "Ya me pagó"
+(`cobrarDeuda`, crea el ingreso de devolución y marca `cobrado`) y "Soltar"
+(`soltarDeuda`, lo pasa a invitación y marca `soltada`). Es el mapa que faltaba:
+está siempre, no espera a los 30 días. El aviso de portada a los 30 días sin
+cobrar (`deudasVencidas`) sigue existiendo como el recordatorio que fastidia.
 
 ### `af_evento` — gastos con fecha conocida
 ```
@@ -446,7 +478,11 @@ Nada más. Sin gráficos, sin proyecciones, sin IA.
 - ~~Firebase (mismo patrón que AscentPeak: Auth Google + Firestore)~~ **hecho**
 - Importar estados de cuenta (`src:"importado"`) y reconciliar contra lo manual
 - Reconciliación de Plin: *"PLIN.TANIA 500 el viernes 31, ¿qué fue?"*
-- Cobro a terceros (`comp`): cuánto le deben
+- ~~Cobro a terceros: cuánto te deben, quién, y detalle de la persona~~ **hecho
+  en rev 4** — registro, vista agrupada, cobrar/soltar. Lo que **falta** para
+  cerrarlo bien es la reconciliación: cuando cae un Plin, preguntar si salda una
+  deuda abierta o es gasto nuevo. Es el mismo motor que la reconciliación de Plin
+  y la importación, por eso las tres van juntas y no sueltas.
 
 ### v3 — IA
 Entra **con dos o tres meses de datos reales**, no antes. Sin datos no tiene qué

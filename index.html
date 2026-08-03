@@ -493,6 +493,22 @@ function deudasVencidas(){
   return (S.deudas||[]).filter(x=>x.sentido==="meDeben" && x.estado==="abierto" &&
     Math.round((hoy - delISO(x.desde))/86400000) >= 30);
 }
+/* Todo lo que te deben ahora mismo — no solo lo vencido a 30 días.
+   Es el "mapa que me haga recordar": está siempre, no espera a que fastidie. */
+function deudasAbiertas(){
+  return (S.deudas||[]).filter(x=>x.sentido==="meDeben" && x.estado==="abierto");
+}
+function deudasTotalC(){ return deudasAbiertas().reduce((t,x)=>t+x.cC,0); }
+function deudasPorPersona(){
+  const g = {};
+  deudasAbiertas().forEach(x=>{
+    const k = (x.n||"alguien").trim().toLowerCase();
+    if(!g[k]) g[k] = { n:x.n||"alguien", detalle:x.detalle||detalleDe(x.n), total:0, items:[] };
+    if(!g[k].detalle && x.detalle) g[k].detalle = x.detalle;
+    g[k].total += x.cC; g[k].items.push(x);
+  });
+  return Object.values(g).sort((a,b)=>b.total-a.total);
+}
 
 function fijosMesC(){
   return S.fijos.filter(f=>f.estado!=="cancelado").reduce((t,f)=>t+f.cC,0);
@@ -698,7 +714,7 @@ function vistaHoy(){
   });
   deudasVencidas().forEach(x=>{
     const dias = Math.round((new Date() - delISO(x.desde))/86400000);
-    avisos += '<div class="aviso-bloque ambar">Le cubriste <b>'+fmt(x.cC)+'</b> a '+esc(x.n)+' hace '+dias+' días y no lo has cobrado.'+
+    avisos += '<div class="aviso-bloque ambar">Le cubriste <b>'+fmt(x.cC)+'</b> a '+esc(x.n)+(x.detalle?' ('+esc(x.detalle)+')':'')+' hace '+dias+' días y no lo has cobrado.'+
       '<div class="acciones">'+
         '<button onclick="cobrarDeuda(\''+x.id+'\')">Ya me pagó</button>'+
         '<button class="p" onclick="soltarDeuda(\''+x.id+'\')">Soltarlo</button>'+
@@ -753,6 +769,15 @@ function vistaHoy(){
   const invLinea = inv>0 ? '<div class="aviso-bloque ambar" style="margin-top:14px">'+
     'Invitaste <b>'+fmt(inv)+'</b> este mes · '+(inv/S.cfg.liquidoC*100).toFixed(0)+'% de tu líquido.</div>' : "";
 
+  const debenTot = deudasTotalC();
+  const debenN = deudasPorPersona().length;
+  const debenLinea = debenTot>0 ? '<div class="sect"><div class="eyebrow">Te deben</div>'+
+    '<div class="card" style="margin-top:10px;cursor:pointer" onclick="abrirDeudas()">'+
+      '<div class="fila"><div class="txt"><div class="t1">'+debenN+(debenN===1?' persona':' personas')+'</div>'+
+        '<div class="t2">toca para ver quién · sigue contando como tu gasto</div></div>'+
+        '<div class="mto num" style="color:var(--alerta)">'+fmt(debenTot)+'</div></div>'+
+    '</div></div>' : "";
+
   return hero + stats + avisos +
     '<div class="sect"><div class="sect-h"><div class="eyebrow">Arrastre</div>'+
       '<div class="num" style="font-size:12px;color:var(--humo)">'+ratio.toFixed(2)+' sueldos</div></div>'+
@@ -761,6 +786,7 @@ function vistaHoy(){
     '</div>'+
     (cuotas?'<div class="sect"><div class="eyebrow">Cuotas</div><div class="card" style="margin-top:10px">'+cuotas+'</div></div>':'')+
     (junta ?'<div class="sect"><div class="eyebrow">Junta</div><div class="card" style="margin-top:10px">'+junta+'</div></div>':'')+
+    debenLinea +
     invLinea +
     '<div style="height:26px"></div>';
 }
@@ -927,6 +953,33 @@ function vistaAjustes(){
 /* ══════════════════════════════════════════════════════════════════
    HOJA DE REGISTRO — tres toques: monto → categoría → guardar
    ══════════════════════════════════════════════════════════════════ */
+/* El mapa de "quién te debe": junta lo abierto, lo agrupa por persona con su
+   detalle, y deja cobrar o soltar sin esperar a los 30 días. */
+function hojaDeudas(){
+  const arr = deudasPorPersona();
+  const total = deudasTotalC();
+  const cuerpo = arr.length ? arr.map(g=>
+    '<div class="card" style="margin-bottom:10px">'+
+      '<div class="fila"><div class="txt"><div class="t1">'+esc(g.n)+'</div>'+
+        (g.detalle?'<div class="t2">'+esc(g.detalle)+'</div>':'')+'</div>'+
+        '<div class="mto num" style="color:var(--alerta)">'+fmt(g.total)+'</div></div>'+
+      g.items.map(x=>{
+        const dias = Math.round((new Date() - delISO(x.desde))/86400000);
+        return '<div class="rev-fila"><span>'+esc(x.motivo||"gasto")+' · '+fmt(x.cC)+' · hace '+dias+'d</span>'+
+          '<span class="acciones">'+
+            '<button onclick="cobrarDeuda(\''+x.id+'\')">Ya me pagó</button>'+
+            '<button onclick="soltarDeuda(\''+x.id+'\')">Soltar</button>'+
+          '</span></div>';
+      }).join("")+
+    '</div>').join("") : '<div class="mini">Nadie te debe ahora mismo.</div>';
+  return '<div class="tapa" onclick="if(event.target===this)cerrarHoja()"><div class="hoja">'+
+    '<div class="hoja-h"><h2>Quién te debe</h2><button class="cerrar" onclick="cerrarHoja()">✕</button></div>'+
+    (total>0?'<div class="mini" style="margin-bottom:12px">En total te deben <b>'+fmt(total)+'</b>. Sigue contando como tu gasto hasta que te paguen: un cobro que quizá no llegue no puede bajarte el mes.</div>':'')+
+    cuerpo+
+  '</div></div>';
+}
+window.abrirDeudas = () => { ui.hoja="deudas"; render(); };
+
 function renderCapa(){
   const capa = document.getElementById("capa");
   if(!ui.hoja){ capa.innerHTML=""; return; }
@@ -935,6 +988,7 @@ function renderCapa(){
     ui.hoja==="fijo"     ? hojaFijo() :
     ui.hoja==="evento"   ? hojaEvento() :
     ui.hoja==="cta"      ? hojaCta() :
+    ui.hoja==="deudas"   ? hojaDeudas() :
     ui.hoja==="liquido"  ? hojaLiquido() : "";
   const m = document.getElementById("monto");
   if(m) setTimeout(()=>m.focus(), 60);
@@ -970,9 +1024,10 @@ function hojaRegistro(){
         '<span style="'+(ui.deb?"color:var(--alerta)":"")+'">Me deben parte</span></div>'+
       (ui.deb ?
         '<div class="dos">'+
-          '<div class="campo"><label>Quién</label><input id="f-quien" type="text" placeholder="nombre"></div>'+
+          '<div class="campo"><label>Quién</label><input id="f-quien" type="text" placeholder="nombre" oninput="autoDetalle(this.value)"></div>'+
           '<div class="campo"><label>Cuánto te deben</label><input id="f-debc" class="num" type="number" inputmode="decimal" step="0.01" placeholder="0.00"></div>'+
         '</div>'+
+        '<div class="campo" style="margin-top:8px"><input id="f-detalle" type="text" placeholder="de dónde es · ej: amiga de Karla" style="font-size:12px;color:var(--humo)"></div>'+
         '<div class="mini">El gasto se anota completo y sigue contando como tuyo: un cobro que quizá no ocurra no puede bajarte el mes. A los 30 días sin cobrar, la app te pregunta si lo sueltas.</div>'
         : '');
   } else if(t==="pago"){
@@ -1168,16 +1223,28 @@ window.ponFecha = iso => {
    tipo de fricción que vacía la app en dos semanas. */
 window.marcar = campo => {
   const g = id => { const e=document.getElementById(id); return e ? e.value : null; };
-  const prev = { monto:g("monto"), nota:g("f-nota"), quien:g("f-quien"), debc:g("f-debc") };
+  const prev = { monto:g("monto"), nota:g("f-nota"), quien:g("f-quien"), debc:g("f-debc"), detalle:g("f-detalle") };
   if(campo==="inv"){ ui.inv = ui.inv?0:1; if(ui.inv) ui.deb=0; }
   if(campo==="deb"){ ui.deb = ui.deb?0:1; if(ui.deb) ui.inv=0; }
   if(campo==="ext"){ ui.ext = ui.ext?0:1; }
   renderCapa();
   const p = (id,v) => { const e=document.getElementById(id); if(e && v!=null && v!=="") e.value=v; };
-  p("monto",prev.monto); p("f-nota",prev.nota); p("f-quien",prev.quien); p("f-debc",prev.debc);
+  p("monto",prev.monto); p("f-nota",prev.nota); p("f-quien",prev.quien); p("f-debc",prev.debc); p("f-detalle",prev.detalle);
   ecoFecha();
 };
 window.recuperar = () => marcar(null);
+
+/* El detalle es de la persona, no del gasto: se escribe una vez y se
+   autocompleta cada vez que vuelves a teclear ese nombre. Editable siempre. */
+function detalleDe(nombre){
+  const n = (nombre||"").trim().toLowerCase(); if(!n) return "";
+  const d = [...(S.deudas||[])].reverse().find(x=>x.sentido==="meDeben" && (x.n||"").trim().toLowerCase()===n && x.detalle);
+  return d ? d.detalle : "";
+}
+window.autoDetalle = nombre => {
+  const el = document.getElementById("f-detalle"); if(!el || el.value.trim()) return;
+  const d = detalleDe(nombre); if(d) el.value = d;
+};
 
 /* Prellenado: la última cuenta y vía usadas en esa categoría (tres toques). */
 function recordarCta(catId){
@@ -1229,9 +1296,10 @@ window.guardarMov = () => {
      Si descontara por adelantado, un cobro que nunca ocurre esconde gasto. */
   if(ui.tipo==="gasto" && ui.deb){
     const quien = (sel("f-quien")||"").trim() || "alguien";
+    const detalle = (sel("f-detalle")||"").trim() || detalleDe(quien);
     const debC = aC(sel("f-debc")) || Math.round(c/2);
-    mov.debC = debC; mov.quien = quien;
-    S.deudas.push({ id:nuevoId(), n:quien, cC:debC, sentido:"meDeben",
+    mov.debC = debC; mov.quien = quien; if(detalle) mov.quienDetalle = detalle;
+    S.deudas.push({ id:nuevoId(), n:quien, detalle:detalle, cC:debC, sentido:"meDeben",
       motivo: nota || (ui.cat||""), desde:d, estado:"abierto", movId:mov.id });
   }
   S.movs.push(mov);
