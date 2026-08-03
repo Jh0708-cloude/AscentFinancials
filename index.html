@@ -1371,7 +1371,11 @@ window.borrarMov = id => {
   if(!m) return;
   if(S.meses[m.d.slice(0,7)] && S.meses[m.d.slice(0,7)].cerrado){ toast("Mes cerrado: no se toca."); return; }
   if(!confirm("¿Borrar este movimiento?")) return;
-  S.movs = S.movs.filter(x=>x.id!==id); guardar(); render();
+  S.movs = S.movs.filter(x=>x.id!==id);
+  /* La deuda no existe sin su movimiento: si no se borra acá, queda huérfana
+     en "Quién te debe" apuntando a un gasto que ya no está. */
+  S.deudas = (S.deudas||[]).filter(x=>x.movId!==id);
+  guardar(); render();
 };
 
 window.abrirFijo = id => { ui.hoja="fijo"; ui.editId=id||null; renderCapa(); };
