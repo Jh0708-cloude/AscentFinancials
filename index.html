@@ -307,6 +307,12 @@ function cargar(){
       // q01 estaba cargada a la Oro y sin fecha de término; el detalle del banco dice Interbank
       (s.cuotas||[]).forEach(q=>{ if(q.id==="q01"){ q.n="Mercadopago"; q.cta="amex";
         q.hasta=q.hasta||"2027-07"; q.dia=q.dia||11; q.tea=q.tea||0; q.fCompra=q.fCompra||"2026-07-15"; } });
+      // El soltar viejo marcaba el gasto ENTERO como invitación. Un gasto con deuda
+      // "me deben" nunca es en sí una invitación (son excluyentes al registrar), así
+      // que ese inv sobra: se limpia y la parte soltada la cuenta invitadoC vía debC.
+      (s.deudas||[]).filter(x=>x.sentido==="meDeben").forEach(x=>{
+        const m=(s.movs||[]).find(y=>y.id===x.movId); if(m && m.inv) m.inv=0;
+      });
       return s;
     }
   }catch(e){ console.warn("Estado ilegible, arranco con la semilla", e); }
@@ -533,8 +539,16 @@ function gastadoC(mesKey){
                .reduce((t,m)=>t+m.cC,0);
 }
 function invitadoC(mesKey){
-  return S.movs.filter(m=>m.tipo==="gasto" && m.inv && m.d.slice(0,7)===mesKey)
-               .reduce((t,m)=>t+m.cC,0);
+  let t = S.movs.filter(m=>m.tipo==="gasto" && m.inv && m.d.slice(0,7)===mesKey)
+                .reduce((a,m)=>a+m.cC,0);
+  /* Deuda soltada: la parte que cubriste y decidiste no cobrar cuenta como
+     invitación — solo esa parte (debC = x.cC), atribuida al mes del gasto.
+     El gasto en sí no se marca inv, así el consumo propio no se infla. */
+  (S.deudas||[]).filter(x=>x.sentido==="meDeben" && x.estado==="soltada").forEach(x=>{
+    const m = S.movs.find(y=>y.id===x.movId);
+    if(m && m.d.slice(0,7)===mesKey) t += x.cC;
+  });
+  return t;
 }
 
 /* Ritmo del mes: se usa el gasto REAL registrado, no una extrapolación.
@@ -1356,10 +1370,11 @@ window.cobrarDeuda = id => {
 };
 window.soltarDeuda = id => {
   const x = (S.deudas||[]).find(y=>y.id===id); if(!x) return;
-  const m = S.movs.find(y=>y.id===x.movId);
-  if(m) m.inv = 1;
+  /* Solo la parte que cubriste (debC) cuenta como invitación, no el gasto
+     entero. Eso lo resuelve invitadoC leyendo las deudas soltadas; acá NO se
+     marca el movimiento como inv, o el consumo propio se contaría de más. */
   x.estado="soltada"; guardar(); render();
-  toast("Soltado. Cuenta como invitación, no como plata por cobrar.");
+  toast("Soltado. Lo que cubriste cuenta como invitación, no como plata por cobrar.");
 };
 window.marcarSinGasto = iso => {
   S.sinGasto = S.sinGasto || []; S.sinGasto.push(iso);
