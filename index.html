@@ -252,13 +252,13 @@ const SEMILLA = {
     {id:"f01", n:"Junta",           cC:100000, cat:"casa",  dia:31, cta:"amex", estado:"activo", ahorro:1},
     {id:"f02", n:"Casa",            cC:43500,  cat:"casa",  dia:1,  cta:"amex", estado:"activo"},
     {id:"f03", n:"Cochera",         cC:15000,  cat:"casa",  dia:1,  cta:"deb",  estado:"activo"},
-    {id:"f04", n:"Internet",        cC:12300,  cat:"casa",  dia:3,  cta:"amex", estado:"activo"},
+    {id:"f04", n:"DirecTV TV",      cC:12300,  cat:"casa",  dia:3,  cta:"amex", estado:"activo", compC:6150, compQuien:"Hermano"},
     {id:"f05", n:"ChatGPT",         cC:9064,   cat:"sub",   dia:20, cta:"oro",  estado:"activo", cur:"USD", cOrig:2417},
     {id:"f06", n:"Claude",          cC:8850,   cat:"sub",   dia:28, cta:"amex", estado:"activo", cur:"USD", cOrig:2360},
     {id:"f07", n:"Vóley",           cC:6500,   cat:"pasaje",dia:1,  cta:"efe",  estado:"activo", protegido:1},
-    {id:"f08", n:"DirecTV TV",      cC:6150,   cat:"casa",  dia:5,  cta:"amex", estado:"activo", compC:6150},
+    {id:"f08", n:"Internet",        cC:12300,  cat:"casa",  dia:5,  cta:"amex", estado:"activo"},
     {id:"f09", n:"Seguro mamá",     cC:5000,   cat:"salud", dia:10, cta:"deb",  estado:"activo"},
-    {id:"f10", n:"Celular",         cC:3993,   cat:"casa",  dia:14, cta:"amex", estado:"activo", compC:3992},
+    {id:"f10", n:"Celular",         cC:7985,   cat:"casa",  dia:14, cta:"amex", estado:"activo", compC:3992, compQuien:"Hermano"},
     {id:"f11", n:"Spotify",         cC:3290,   cat:"sub",   dia:19, cta:"oro",  estado:"activo"},
     {id:"f12", n:"Gym Net",         cC:3000,   cat:"salud", dia:20, cta:"amex", estado:"activo"},
     {id:"f13", n:"Degravamen",      cC:1544,   cat:"otros", dia:10, cta:"amex", estado:"revision"},
@@ -307,11 +307,21 @@ function cargar(){
       // q01 estaba cargada a la Oro y sin fecha de término; el detalle del banco dice Interbank
       (s.cuotas||[]).forEach(q=>{ if(q.id==="q01"){ q.n="Mercadopago"; q.cta="amex";
         q.hasta=q.hasta||"2027-07"; q.dia=q.dia||11; q.tea=q.tea||0; q.fCompra=q.fCompra||"2026-07-15"; } });
-      // El soltar viejo marcaba el gasto ENTERO como invitación. Un gasto con deuda
-      // "me deben" nunca es en sí una invitación (son excluyentes al registrar), así
-      // que ese inv sobra: se limpia y la parte soltada la cuenta invitadoC vía debC.
-      (s.deudas||[]).filter(x=>x.sentido==="meDeben").forEach(x=>{
-        const m=(s.movs||[]).find(y=>y.id===x.movId); if(m && m.inv) m.inv=0;
+      /* f04 y f08 tenían los nombres cambiados: el de 123 del día 3 es el
+         DirecTV (compartido) y el del día 5 es el internet (propio).
+         Además el compartido guardaba TU MITAD, no el cargo del banco: el
+         saldo de la Amex quedaba corto todos los meses y el arrastre se veía
+         mejor de lo que es. Ahora `cC` es siempre el cargo entero y `compC`
+         lo que te devuelven. */
+      (s.fijos||[]).forEach(f=>{
+        if(f.id==="f04"){ f.n="DirecTV TV"; f.cC=12300; f.compC=6150; f.compQuien=f.compQuien||"Hermano"; }
+        if(f.id==="f08"){ f.n="Internet";   f.cC=12300; delete f.compC; delete f.compQuien; }
+        if(f.id==="f10"){ f.cC=7985; f.compC=3992; f.compQuien=f.compQuien||"Hermano"; }
+      });
+      (s.movs||[]).forEach(m=>{
+        if(m.fijoId==="f04"){ m.nota="DirecTV TV"; }
+        if(m.fijoId==="f08"){ m.nota="Internet"; if(!m.ed && m.cC===6150) m.cC=12300; }
+        if(m.fijoId==="f10" && !m.ed && m.cC===3993) m.cC=7985;
       });
       return s;
     }
@@ -516,8 +526,33 @@ function deudasPorPersona(){
   return Object.values(g).sort((a,b)=>b.total-a.total);
 }
 
-function fijosMesC(){
-  return S.fijos.filter(f=>f.estado!=="cancelado").reduce((t,f)=>t+f.cC,0);
+/* Lo que un fijo te cuesta a ti: el cargo entero menos lo que te devuelven.
+   El cargo entero es el que sube a la tarjeta (cuadra con el banco); el neto
+   es el que sale de tu libre. Son dos números y los dos tienen que ser
+   verdad, así que ninguno se guarda "arreglado".
+
+   `compC` es la PARTE del otro, no un monto fijo: si el cargo cambia, la
+   parte cambia con él. La mitad del DirecTV es la mitad venga en 123 o en
+   144. Por eso se guarda como proporción de `f.cC` y se aplica al cargo real.
+
+   Y si el mes ya tiene el cargo registrado, manda el cargo real, no el plan:
+   agosto vino en 144 y tu costo fue 72, no 61.50. El fijo es lo que esperas;
+   el movimiento es lo que pasó. */
+function cargoRealC(f, mesKey){
+  const m = mesKey && S.movs.find(x=>x.fijoId===f.id && x.d.slice(0,7)===mesKey);
+  return m ? m.cC : f.cC;
+}
+function compDeC(f, cargoC){
+  if(!f.compC || !f.cC) return 0;
+  return Math.round(cargoC * (f.compC / f.cC));
+}
+function netoFijoC(f, mesKey){
+  const cargo = cargoRealC(f, mesKey);
+  return cargo - compDeC(f, cargo);
+}
+function fijosMesC(mesKey){
+  mesKey = mesKey || claveMes(new Date());
+  return S.fijos.filter(f=>f.estado!=="cancelado").reduce((t,f)=>t+netoFijoC(f,mesKey),0);
 }
 function mesLargo(ym){ const p=String(ym).split("-"); return MESES_N[parseInt(p[1],10)-1]+" "+p[0]; }
 
@@ -530,7 +565,7 @@ function eventosMesC(mesKey){
 }
 /* Libre del mes = líquido − fijos − cuotas − eventos agendados */
 function libreC(mesKey){
-  return S.cfg.liquidoC - fijosMesC() - cuotasMesC() - eventosMesC(mesKey);
+  return S.cfg.liquidoC - fijosMesC(mesKey) - cuotasMesC() - eventosMesC(mesKey);
 }
 /* Gasto discrecional registrado en el mes (los fijos no cuentan acá:
    ya están descontados del libre). */
@@ -539,16 +574,8 @@ function gastadoC(mesKey){
                .reduce((t,m)=>t+m.cC,0);
 }
 function invitadoC(mesKey){
-  let t = S.movs.filter(m=>m.tipo==="gasto" && m.inv && m.d.slice(0,7)===mesKey)
-                .reduce((a,m)=>a+m.cC,0);
-  /* Deuda soltada: la parte que cubriste y decidiste no cobrar cuenta como
-     invitación — solo esa parte (debC = x.cC), atribuida al mes del gasto.
-     El gasto en sí no se marca inv, así el consumo propio no se infla. */
-  (S.deudas||[]).filter(x=>x.sentido==="meDeben" && x.estado==="soltada").forEach(x=>{
-    const m = S.movs.find(y=>y.id===x.movId);
-    if(m && m.d.slice(0,7)===mesKey) t += x.cC;
-  });
-  return t;
+  return S.movs.filter(m=>m.tipo==="gasto" && m.inv && m.d.slice(0,7)===mesKey)
+               .reduce((t,m)=>t+m.cC,0);
 }
 
 /* Ritmo del mes: se usa el gasto REAL registrado, no una extrapolación.
@@ -564,7 +591,7 @@ function invitadoC(mesKey){
    Un cumpleaños de 300 sale una vez; restarlo del ritmo equivale a decir
    que tu papá cumple años todos los meses hasta que salgas de deuda. */
 function ritmoC(mesKey){
-  return S.cfg.liquidoC - fijosMesC() - cuotasMesC() - gastadoC(mesKey);
+  return S.cfg.liquidoC - fijosMesC(mesKey) - cuotasMesC() - gastadoC(mesKey);
 }
 function fechaSalida(extraC){
   extraC = extraC || 0;
@@ -877,20 +904,27 @@ function vistaMovs(){
 /* ─────────────────────── FIJOS ─────────────────────── */
 function vistaFijos(){
   const act = S.fijos.filter(f=>f.estado!=="cancelado");
-  const total = act.reduce((t,f)=>t+f.cC,0);
+  /* El total es lo que te cuesta a ti (neto), no la suma de los cargos:
+     tiene que ser el mismo número que descuenta el libre del mes. */
+  const mk = claveMes(new Date());
+  const total = act.reduce((t,f)=>t+netoFijoC(f,mk),0);
   const anual = total*12;
-  const filas = act.sort((a,b)=>b.cC-a.cC).map(f=>{
+  const filas = act.sort((a,b)=>netoFijoC(b,mk)-netoFijoC(a,mk)).map(f=>{
     const c = cta(f.cta);
+    const cargo = cargoRealC(f, mk);
+    const distinto = cargo !== f.cC;
     return '<div class="fila" onclick="abrirFijo(\''+f.id+'\')"><div class="txt">'+
       '<div class="t1">'+esc(f.n)+
         (f.estado==="revision"?'<span class="chip inv">revisar</span>':'')+
         (f.ahorro?'<span class="chip ext">ahorro</span>':'')+
         (f.protegido?'<span class="chip ext">protegido</span>':'')+'</div>'+
       '<div class="t2">día '+f.dia+' · '+(c?esc(c.n):"?")+
-        (f.compC?' · te devuelven '+fmt(f.compC):'')+
-        (f.cur==="USD"?' · US$ '+(f.cOrig/100).toFixed(2):'')+'</div>'+
-      '</div><div class="mto num"><div>'+fmt(f.cC)+'</div>'+
-      '<div class="t2" style="text-align:right">'+fmtCorto(f.cC*12)+'/año</div></div></div>';
+        (f.compC?' · te devuelven '+fmt(compDeC(f,cargo)):'')+
+        (f.cur==="USD"?' · US$ '+(f.cOrig/100).toFixed(2):'')+
+        (distinto?' · este mes vino '+fmt(cargo)+', no '+fmt(f.cC):'')+'</div>'+
+      '</div><div class="mto num"><div>'+fmt(netoFijoC(f,mk))+'</div>'+
+      (f.compC?'<div class="t2" style="text-align:right">cargo '+fmt(cargo)+'</div>':'')+
+      '<div class="t2" style="text-align:right">'+fmtCorto(netoFijoC(f)*12)+'/año</div></div></div>';
   }).join("");
 
   const cuotas = S.cuotas.map(q=>
@@ -1131,8 +1165,16 @@ function hojaFijo(){
     '<div class="hoja-h"><h2>'+(f?"Editar fijo":"Nuevo fijo")+'</h2><button class="cerrar" onclick="cerrarHoja()">✕</button></div>'+
     '<div class="campo"><label>Nombre</label><input id="fj-n" type="text" value="'+(f?esc(f.n):"")+'" placeholder="Internet"></div>'+
     '<div class="dos">'+
-      '<div class="campo"><label>Tu parte al mes</label><input id="fj-c" class="num" type="number" step="0.01" value="'+(f?(f.cC/100).toFixed(2):"")+'"></div>'+
+      '<div class="campo"><label>Cargo del banco</label><input id="fj-c" class="num" type="number" step="0.01" value="'+(f?(f.cC/100).toFixed(2):"")+'"></div>'+
       '<div class="campo"><label>Día de cobro</label><input id="fj-d" class="num" type="number" min="1" max="31" value="'+(f?f.dia:1)+'"></div>'+
+    '</div>'+
+    /* Compartido: se guarda el cargo entero (cuadra con la tarjeta) y aparte
+       lo que te devuelven. Guardar solo tu mitad descuadra el saldo.
+       "Te devuelven" se guarda en soles pero se usa como proporción: si el
+       cargo sube, su parte sube igual. */
+    '<div class="dos">'+
+      '<div class="campo"><label>Te devuelven</label><input id="fj-comp" class="num" type="number" step="0.01" placeholder="0.00" value="'+(f&&f.compC?(f.compC/100).toFixed(2):"")+'"></div>'+
+      '<div class="campo"><label>Quién</label><input id="fj-quien" type="text" placeholder="nadie" value="'+(f&&f.compQuien?esc(f.compQuien):"")+'"></div>'+
     '</div>'+
     '<div class="dos">'+
       '<div class="campo"><label>Sale de</label><select id="fj-cta">'+S.ctas.filter(c=>c.activa).map(c=>
@@ -1140,7 +1182,9 @@ function hojaFijo(){
       '<div class="campo"><label>Estado</label><select id="fj-e">'+["activo","revision","cancelado"].map(e=>
         '<option value="'+e+'"'+(f&&f.estado===e?" selected":"")+'>'+e+'</option>').join("")+'</select></div>'+
     '</div>'+
-    (f?'<div class="mini">Cuesta '+fmtCorto(f.cC*12)+' al año.</div>':'')+
+    (f?'<div class="mini">Cuesta '+fmtCorto(netoFijoC(f)*12)+' al año'+
+        (f.compC?'. El banco carga '+fmt(f.cC)+' y te devuelven '+fmt(f.compC)+
+          ' ('+Math.round(f.compC/f.cC*100)+'%). Si el cargo cambia, su parte cambia igual: no hay que editar nada':'')+'.</div>':'')+
     '<button class="btn" onclick="guardarFijo()">Guardar</button>'+
     (f?'<button class="btn peligro" onclick="borrarFijo(\''+f.id+'\')">Borrar</button>':'')+
   '</div></div>';
@@ -1344,7 +1388,30 @@ window.deshacer = id => {
 };
 
 /* Revisión de cargos automáticos */
-window.fijoOk  = id => { const m=S.movs.find(x=>x.id===id); if(m){ m.rev=1; guardar(); render(); } };
+/* El fijo compartido sube ENTERO a la tarjeta y del libre sale solo tu parte.
+   La parte del otro no desaparece: se abre como deuda al confirmar que el
+   cargo llegó, no al crearlo. Antes de que el banco cobre no hay nada que
+   cobrar. Proporcional al monto real: si el mes vino en 144, su parte sube
+   sola sin tocar el fijo. */
+function abrirComp(m){
+  if(!m || !m.fijoId) return;
+  const f = S.fijos.find(x=>x.id===m.fijoId);
+  if(!f || !f.compC || !f.cC) return;
+  if((S.deudas||[]).some(x=>x.movId===m.id)) return;   // ya estaba abierta
+  const cC = compDeC(f, m.cC);
+  if(cC <= 0) return;
+  S.deudas = S.deudas || [];
+  S.deudas.push({ id:nuevoId(), n:f.compQuien||"Compartido", detalle:f.n, cC,
+    sentido:"meDeben", motivo:f.n, desde:m.d, estado:"abierto", movId:m.id });
+  return cC;
+}
+window.fijoOk  = id => {
+  const m = S.movs.find(x=>x.id===id); if(!m) return;
+  m.rev = 1;
+  const cC = abrirComp(m);
+  guardar(); render();
+  if(cC) toast("Anotado. Te deben <b>"+fmt(cC)+"</b> de ese cargo.");
+};
 window.fijoNo  = id => {
   S.movs = S.movs.filter(x=>x.id!==id); guardar(); render();
   toast("Quitado. Si el banco lo cobra después, lo anotas a mano.");
@@ -1354,15 +1421,25 @@ window.fijoOtro = id => {
   const v = prompt("¿Cuánto cobraron en realidad?", (m.cC/100).toFixed(2));
   if(v===null) return;
   const c = aC(v); if(c<=0) return;
-  m.cC=c; m.rev=1; m.ed=1; guardar(); render();
-  toast("Corregido. Si el cobro se repitió, reclámalo antes del próximo corte.");
+  m.cC=c; m.rev=1; m.ed=1;
+  const cC = abrirComp(m);
+  guardar(); render();
+  toast(cC ? "Corregido. Te deben <b>"+fmt(cC)+"</b> de ese cargo."
+           : "Corregido. Si el cobro se repitió, reclámalo antes del próximo corte.");
 };
 
 /* Cobros a personas */
 window.cobrarDeuda = id => {
   const x = (S.deudas||[]).find(y=>y.id===id); if(!x) return;
   const m = S.movs.find(y=>y.id===x.movId);
-  const destino = (m && m.cta) || (S.ctas.find(c=>c.tipo!=="credito"&&c.activa)||{}).id;
+  /* La plata vuelve donde la puedas usar. Si el gasto salió de una tarjeta,
+     mandar el ingreso ahí SUBIRÍA la deuda (así cuenta saldos()): el cobro
+     entraría al revés. Un reembolso sobre tarjeta se registra a mano como
+     pago si de verdad fue a la tarjeta. */
+  const o = cta(m && m.cta);
+  const destino = (o && o.tipo!=="credito") ? o.id
+    : (S.ctas.find(c=>c.tipo==="liquida"&&c.activa) ||
+       S.ctas.find(c=>c.tipo!=="credito"&&c.activa) || {}).id;
   S.movs.push({ id:nuevoId(), d:hoyISO(), ts:Date.now(), cC:x.cC, cur:S.cfg.cur,
     tipo:"ingreso", cat:null, cta:destino, cta2:null, via:null, inv:0, ext:0,
     src:"manual", nota:"Devolución de "+x.n });
@@ -1370,11 +1447,12 @@ window.cobrarDeuda = id => {
 };
 window.soltarDeuda = id => {
   const x = (S.deudas||[]).find(y=>y.id===id); if(!x) return;
-  /* Solo la parte que cubriste (debC) cuenta como invitación, no el gasto
-     entero. Eso lo resuelve invitadoC leyendo las deudas soltadas; acá NO se
-     marca el movimiento como inv, o el consumo propio se contaría de más. */
+  const m = S.movs.find(y=>y.id===x.movId);
+  /* Un fijo compartido no se "invita": marcarlo así ensucia el contador de
+     invitaciones con el recibo del internet. Solo se suelta la deuda. */
+  if(m && !m.fijoId) m.inv = 1;
   x.estado="soltada"; guardar(); render();
-  toast("Soltado. Lo que cubriste cuenta como invitación, no como plata por cobrar.");
+  toast("Soltado. Cuenta como invitación, no como plata por cobrar.");
 };
 window.marcarSinGasto = iso => {
   S.sinGasto = S.sinGasto || []; S.sinGasto.push(iso);
@@ -1398,12 +1476,22 @@ window.guardarFijo = () => {
   const n = document.getElementById("fj-n").value.trim();
   const c = aC(document.getElementById("fj-c").value);
   if(!n || c<=0){ toast("Falta nombre o monto."); return; }
+  const compC = aC((document.getElementById("fj-comp")||{}).value || 0);
+  const quien = ((document.getElementById("fj-quien")||{}).value || "").trim();
+  if(compC >= c){ toast("Lo que te devuelven no puede ser todo el cargo."); return; }
   const datos = {
     n, cC:c, dia:parseInt(document.getElementById("fj-d").value)||1,
     cta:document.getElementById("fj-cta").value,
-    estado:document.getElementById("fj-e").value
+    estado:document.getElementById("fj-e").value,
+    compC: compC>0 ? compC : undefined,
+    compQuien: compC>0 ? (quien || "Compartido") : undefined
   };
-  if(ui.editId){ Object.assign(S.fijos.find(f=>f.id===ui.editId), datos); }
+  if(!datos.compC){ delete datos.compC; delete datos.compQuien; }
+  if(ui.editId){
+    const f = S.fijos.find(x=>x.id===ui.editId);
+    Object.assign(f, datos);
+    if(!datos.compC){ delete f.compC; delete f.compQuien; }  // omitir no borra
+  }
   else { S.fijos.push(Object.assign({id:nuevoId(), cat:"otros"}, datos)); }
   guardar(); cerrarHoja(); render(); toast("Fijo guardado.");
 };
@@ -1458,7 +1546,7 @@ window.cerrarMes = () => {
   const rul = ruleteos(mk).length > 0;
   if(!confirm("Se congelan los números de "+MESES_N[+mk.slice(5,7)-1]+". No se podrán editar después. ¿Cerrar?")) return;
   S.meses[mk] = {
-    liquidoC:S.cfg.liquidoC, fijosC:fijosMesC(), cuotasC:cuotasMesC(),
+    liquidoC:S.cfg.liquidoC, fijosC:fijosMesC(mk), cuotasC:cuotasMesC(),
     libreC:libreC(mk), gastadoC:gastadoC(mk), invC:invitadoC(mk),
     deudaFinC:deudaRevolvente(), ruleteo:rul, cerrado:true
   };
@@ -1637,6 +1725,11 @@ S.cfg.autoDesde = S.cfg.autoDesde || hoyISO();
 S.sinGasto = S.sinGasto || [];
 guardar();
 aplicarFijos();
+/* Los cargos compartidos que ya confirmaste antes de que existiera esto no
+   tienen su deuda abierta. abrirComp no duplica, así que pasar por todos es
+   seguro y se puede dejar puesto. */
+S.movs.filter(m=>m.fijoId && m.rev).forEach(abrirComp);
+guardar();
 
 render();
 </script>

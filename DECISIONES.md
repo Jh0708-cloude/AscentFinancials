@@ -3,10 +3,8 @@
 > Documento de traspaso. Si una conversación se corta o empiezas una nueva,
 > este archivo es la fuente de verdad. Léelo antes de proponer cambios.
 >
-> Última actualización: 2026-08-03 (rev. 4) · Estado: **v1 en uso** — PWA
-> desplegada, Firebase conectado, paleta de AscentPeak aplicada. Rev 4 añade
-> el detalle de persona en "me deben" y la vista "quién te debe", y reconcilia
-> el modelo de `af_deuda` con el código real (`cC`/`movId`/`detalle`).
+> Última actualización: 2026-08-05 (rev. 4) · Estado: **v1 en uso** — PWA
+> desplegada, Firebase conectado, paleta de AscentPeak aplicada.
 
 ---
 
@@ -202,11 +200,11 @@ Sin dato real no hay fecha real, y una fecha inventada se rompe.
 | Junta | 1000.00 | **No es gasto: es ahorro ilíquido** |
 | Casa | 435.00 | |
 | Cochera | 150.00 | |
-| Internet | 123.00 | DirecTV, servicio propio |
+| Internet | 123.00 | Servicio propio, cargo entero tuyo |
 | ChatGPT | ~90.64 | US$ 24.17 |
 | Claude | ~88.50 | US$ 23.60 |
 | Vóley | ~65.00 | S/ 5 × 3 días × sem. **Hábito bueno, no se recorta** |
-| DirecTV TV | 61.50 | 50% con el hermano (cargo total 123) |
+| DirecTV TV | 61.50 | 50% con el hermano (cargo esperado 123) · agosto vino 144 y no se devuelve: la mitad de lo que venga es del hermano |
 | Seguro mamá | 50.00 | |
 | Celular | 39.93 | 50% con el hermano (cargo total 79.85) |
 | Spotify | 32.90 | |
@@ -297,7 +295,11 @@ no opina; muestra el número y la decisión es del usuario.
 | **Cumpleaños y regalos se agendan** | Tienen fecha conocida. Se restan de la bolsa **antes** de repartirla. Así no obligan a ruletear. |
 | **Compras grandes tienen 48 h, no bloqueo** | Ropa y setup son de S/ 200-800 y se comen un finde de un golpe. Si superan el tope, la app las **agenda** para el finde siguiente. El impulso caduca; la necesidad real no. |
 | **Invitar tiene sobre, no prohibición** | Es un hábito social, no un error. Se le da monto y se ve consumir: *"invitaste S/ 640 · 17% de tu líquido"*. Prohibirlo garantiza que reviente y deje de registrar. Regla heredada: nunca castigar el hábito fuerte. |
-| **Los compartidos se registran completos** | DirecTV y celular salen enteros de su tarjeta; el hermano devuelve después. Registrar la mitad hace que el saldo de la tarjeta no cuadre nunca. Campo `comp` y el reembolso como movimiento propio. |
+| **Los compartidos se registran completos** | DirecTV y celular salen enteros de su tarjeta; el hermano devuelve después. Registrar la mitad hace que el saldo de la tarjeta no cuadre nunca. `af_fijo.cC` guarda el **cargo del banco** y `compC` lo que te devuelven; el libre del mes descuenta solo el neto. Los dos números en pantalla, ninguno "arreglado". |
+| **La parte del otro se abre como deuda al confirmar el cargo** | No al crearlo: antes de que el banco cobre no hay nada que cobrar. Sin esto, el cargo entero subía a la tarjeta, el libre descontaba la mitad y los ~S/ 101 del hermano no vivían en ningún lado: se cobraban de memoria. |
+| **`compC` es una proporción, no un monto** | La mitad del DirecTV es la mitad venga en 123 o en 144. Se guarda en soles sobre el cargo esperado y se aplica al cargo real, así el mes que el recibo cambia no hay que editar nada. |
+| **El cargo registrado le gana al fijo** | El fijo es lo que esperas; el movimiento es lo que pasó. Cuando el mes ya tiene el cargo, el libre usa el cargo real: agosto vino en 144 y el costo fue 72, no 61.50. Mientras no llegue, manda el plan. |
+| **Un reembolso nunca entra a una tarjeta de crédito** | Un ingreso sobre una tarjeta *sube* la deuda en `saldos()`. El cobro de un gasto pagado con Amex entra a la cuenta líquida; si de verdad fue a la tarjeta, se registra a mano como pago. |
 | **Mes cerrado es inmutable** | `af_mes` congela límite, gastado e ingreso. Cambiar el plan hoy **nunca** altera un mes cerrado. Es `tp` de AscentPeak. |
 | **Montos en céntimos enteros** | Los redondeos de float aparecen recién con 300 movimientos, y para entonces ya contaminaron todo. |
 | **Fecha del hecho ≠ fecha de registro** | `d` es cuándo pasó, `ts` cuándo se anotó. En `gastos` solo existía el momento de tipeo: no se podía anotar un gasto de ayer. |
@@ -333,13 +335,9 @@ Cero valores personales en el código. Todo lo que sea de Jhair vive acá.
 - `d` fecha del hecho · `ts` cuándo se registró
 - `cta` origen real · `cta2` destino (pagos y traslados)
 - `via` = yape · plin · fisica · efectivo · transferencia
-- `inv:1` invitación · `comp` reembolso de un gasto compartido (mitad del hermano) · `ext:1` ingreso extraordinario
+- `inv:1` invitación · `comp` por cobrar a terceros · `ext:1` ingreso extraordinario
 - `src` = manual · importado · sugerido
 - `ed:1` corregido a mano · `link` enlaza el Plin con el consumo ya anotado
-- **"Me deben parte" NO usa `comp`.** Escribe en `af_deuda` (ver abajo) y espeja
-  `debC`, `quien` y `quienDetalle` en el movimiento. `comp` es solo para los
-  compartidos fijos (DirecTV, celular), donde el cargo sale entero y el hermano
-  devuelve la mitad.
 
 ### `af_fijo` — recurrentes
 ```
@@ -369,38 +367,12 @@ disponible ni gasto perdido.
 
 ### `af_deuda` — deudas con personas
 ```
-{ id, n, detalle, cC, sentido:debo|meDeben, motivo, desde,
-  estado:abierto|cobrado|soltada, movId }
+{ id, n, c, sentido:debo|meDeben, motivo, desde, estado, movPago }
 ```
 Existe porque los S/ 2,500 que se debían a la madre eran una obligación real e
 **invisible para los estados de cuenta**. Sin esto, la app reporta una situación
 mejor que la real. Distinto de `comp` en `af_mov`, que es un reembolso puntual
 por un consumo compartido.
-
-Los montos son **céntimos enteros** (`cC`), como todo el modelo, y `movId`
-enlaza con el movimiento que originó la deuda — no `c`/`movPago`, que era como lo
-decía la rev anterior antes de escribir el código.
-
-**Registro (`estado:"abierto"`):** el toggle "Me deben parte" en la hoja de gasto
-anota el gasto **completo** (sigue contando como tuyo) y abre una `af_deuda`
-aparte. Un cobro que quizá no ocurra no puede bajarte el mes. Campos que se
-llenan ahí: `n` (quién) y `detalle`.
-
-**`detalle` es de la persona, no del gasto.** Es la sub-línea chica bajo el
-nombre ("amiga de Karla", "del vóley") para reconocer quién es. Se escribe una
-vez y se **autocompleta** solo cuando vuelves a teclear ese nombre
-(`detalleDe(nombre)` busca la última deuda con ese nombre que tenga detalle).
-Siempre editable. No hay colección de personas: el directorio se deriva del
-historial, así no se agrega superficie de sync por algo que ya vive en los datos.
-
-**La vista "quién te debe":** bloque tocable en la portada (*"Te deben · S/ X ·
-N personas"*, solo si hay algo abierto) que abre una hoja agrupada por persona
-(`deudasPorPersona()`, case-insensitive, hereda el detalle entre movimientos del
-mismo nombre). Cada persona muestra su total y sus movimientos con "Ya me pagó"
-(`cobrarDeuda`, crea el ingreso de devolución y marca `cobrado`) y "Soltar"
-(`soltarDeuda`, lo pasa a invitación y marca `soltada`). Es el mapa que faltaba:
-está siempre, no espera a los 30 días. El aviso de portada a los 30 días sin
-cobrar (`deudasVencidas`) sigue existiendo como el recordatorio que fastidia.
 
 ### `af_evento` — gastos con fecha conocida
 ```
@@ -478,11 +450,7 @@ Nada más. Sin gráficos, sin proyecciones, sin IA.
 - ~~Firebase (mismo patrón que AscentPeak: Auth Google + Firestore)~~ **hecho**
 - Importar estados de cuenta (`src:"importado"`) y reconciliar contra lo manual
 - Reconciliación de Plin: *"PLIN.TANIA 500 el viernes 31, ¿qué fue?"*
-- ~~Cobro a terceros: cuánto te deben, quién, y detalle de la persona~~ **hecho
-  en rev 4** — registro, vista agrupada, cobrar/soltar. Lo que **falta** para
-  cerrarlo bien es la reconciliación: cuando cae un Plin, preguntar si salda una
-  deuda abierta o es gasto nuevo. Es el mismo motor que la reconciliación de Plin
-  y la importación, por eso las tres van juntas y no sueltas.
+- Cobro a terceros (`comp`): cuánto le deben
 
 ### v3 — IA
 Entra **con dos o tres meses de datos reales**, no antes. Sin datos no tiene qué
@@ -541,6 +509,11 @@ usuario. El modelo no los ofrece como fuente de abono en ningún cálculo.
 - **Mirar de dónde sale el número antes de contarlo.** El estado de cuenta
   mostraba S/ 1,823 de gasto mensual. El real pasa de S/ 10,000. Todo lo demás
   estaba en efectivo y Plin.
+- **Un nombre mal puesto sobrevive a la revisión; un monto mal puesto, no.**
+  `f04` se llamaba "Internet" y `f08` "DirecTV TV", cambiados entre sí, y
+  nadie lo notó hasta que el cargo cambió de monto. El error de nombre tapaba
+  uno peor: el compartido guardaba la mitad en vez del cargo del banco, y el
+  saldo de la Amex quedaba S/ 61.50 corto todos los meses.
 - **Un número correcto en dos lugares se cuenta dos veces.** Los S/ 999 estaban
   en `af_cuota` y también dentro del saldo de la Amex. El arrastre marcaba 1.98
   en vez de 1.71 y la fecha de salida se atrasaba 20 días. Antes de restar o
