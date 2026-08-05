@@ -249,18 +249,18 @@ const SEMILLA = {
     {id:"efe",   n:"Efectivo",     tipo:"efectivo",banco:"",          lineaC:0,       saldoIniC:0,      activa:1}
   ],
   fijos:[
-    {id:"f01", n:"Junta",           cC:100000, cat:"casa",  dia:31, cta:"amex", estado:"activo", ahorro:1},
-    {id:"f02", n:"Casa",            cC:43500,  cat:"casa",  dia:1,  cta:"amex", estado:"activo"},
-    {id:"f03", n:"Cochera",         cC:15000,  cat:"casa",  dia:1,  cta:"deb",  estado:"activo"},
+    {id:"f01", n:"Junta",           cC:100000, cat:"casa",  dia:28, cta:"amex", estado:"activo", ahorro:1, manual:1},
+    {id:"f02", n:"Casa",            cC:43500,  cat:"casa",  dia:28, cta:"amex", estado:"activo", manual:1},
+    {id:"f03", n:"Cochera",         cC:15000,  cat:"casa",  dia:28, cta:"amex", estado:"activo", manual:1},
     {id:"f04", n:"DirecTV TV",      cC:12300,  cat:"casa",  dia:3,  cta:"amex", estado:"activo", compC:6150, compQuien:"Hermano"},
     {id:"f05", n:"ChatGPT",         cC:9064,   cat:"sub",   dia:20, cta:"oro",  estado:"activo", cur:"USD", cOrig:2417},
     {id:"f06", n:"Claude",          cC:8850,   cat:"sub",   dia:28, cta:"amex", estado:"activo", cur:"USD", cOrig:2360},
-    {id:"f07", n:"Vóley",           cC:6500,   cat:"pasaje",dia:1,  cta:"efe",  estado:"activo", protegido:1},
-    {id:"f08", n:"Internet",        cC:12300,  cat:"casa",  dia:5,  cta:"amex", estado:"activo"},
-    {id:"f09", n:"Seguro mamá",     cC:5000,   cat:"salud", dia:10, cta:"deb",  estado:"activo"},
-    {id:"f10", n:"Celular",         cC:7985,   cat:"casa",  dia:14, cta:"amex", estado:"activo", compC:3992, compQuien:"Hermano"},
+    {id:"f07", n:"Vóley",           cC:6500,   cat:"pasaje",dia:1,  cta:"efe",  estado:"cancelado", protegido:1},
+    {id:"f08", n:"Internet",        cC:12300,  cat:"casa",  dia:5,  cta:"amex", estado:"activo", manual:1},
+    {id:"f09", n:"Seguro mamá",     cC:5000,   cat:"salud", dia:28, cta:"amex", estado:"activo", manual:1},
+    {id:"f10", n:"Celular",         cC:7985,   cat:"casa",  dia:14, cta:"amex", estado:"activo", compC:3992, compQuien:"Hermano", manual:1},
     {id:"f11", n:"Spotify",         cC:3290,   cat:"sub",   dia:19, cta:"oro",  estado:"activo"},
-    {id:"f12", n:"Gym Net",         cC:3000,   cat:"salud", dia:20, cta:"amex", estado:"activo"},
+    {id:"f12", n:"Gym Net",         cC:3000,   cat:"salud", dia:20, cta:"amex", estado:"cancelado"},
     {id:"f13", n:"Degravamen",      cC:1544,   cat:"otros", dia:10, cta:"amex", estado:"revision"},
     {id:"f14", n:"BitePal (anual)", cC:917,    cat:"sub",   dia:1,  cta:"oro",  estado:"activo"}
   ],
@@ -323,6 +323,32 @@ function cargar(){
         if(m.fijoId==="f08"){ m.nota="Internet"; if(!m.ed && m.cC===6150) m.cC=12300; }
         if(m.fijoId==="f10" && !m.ed && m.cC===3993) m.cC=7985;
       });
+      /* Migración de una sola pasada: cambia decisiones del usuario (día de
+         cobro, cuenta, estado), no formas de dato. Si se repitiera en cada
+         carga, revivir el gym o mover una fecha a mano sería imposible: la
+         app lo pisaría al siguiente arranque. */
+      if(!s.cfg.mig4){
+        const set = (id,d)=>{ const f=(s.fijos||[]).find(x=>x.id===id); if(f) Object.assign(f,d); };
+        /* Junta, casa, cochera y seguro no se cobran solos: los paga él el
+           día que cobra, y todo va a la Amex. */
+        set("f01",{dia:28, cta:"amex", manual:1});
+        set("f02",{dia:28, cta:"amex", manual:1});
+        set("f03",{dia:28, cta:"amex", manual:1});
+        set("f09",{dia:28, cta:"amex", manual:1});
+        /* Internet y celular llegan como recibo, no como débito automático. */
+        set("f08",{cta:"amex", manual:1});
+        set("f10",{cta:"amex", manual:1});
+        /* Ya no va a ninguno de los dos. Cancelado, no borrado: la historia
+           de los meses en que sí fue tiene que seguir cuadrando. */
+        set("f07",{estado:"cancelado"});
+        set("f12",{estado:"cancelado"});
+        /* Los cargos que la app inventó por esos fijos y que el banco nunca
+           hizo. Solo los no confirmados: si él marcó "Llegó", pasó de verdad. */
+        const manuales = ["f01","f02","f03","f08","f09","f10"];
+        s.movs = (s.movs||[]).filter(m =>
+          !(m.src==="auto" && !m.rev && manuales.indexOf(m.fijoId) > -1));
+        s.cfg.mig4 = 1;
+      }
       return s;
     }
   }catch(e){ console.warn("Estado ilegible, arranco con la semilla", e); }
@@ -472,6 +498,10 @@ function aplicarFijos(){
   let n = 0;
   S.fijos.forEach(f=>{
     if(f.estado === "cancelado") return;
+    /* El manual no se debita solo: el banco no lo cobra, lo pagas tú. Si la
+       app lo diera por hecho estaría inventando un cargo, y un saldo inventado
+       es peor que uno incompleto. Va a "Por pagar" hasta que lo confirmes. */
+    if(f.manual) return;
     const c = cta(f.cta);
     if(!c || c.tipo === "efectivo") return;
     const dia = Math.min(f.dia||1, diasDelMes(hoy));
@@ -488,6 +518,20 @@ function aplicarFijos(){
   return n;
 }
 function porRevisar(mk){ return S.movs.filter(m=>m.fijoId && !m.rev && m.d.slice(0,7)===mk); }
+
+/* Fijos que pagas tú y todavía no has pagado este mes. Están descontados del
+   libre desde el día 1 (son costo seguro), pero la deuda de la tarjeta no los
+   tiene hasta que los pagues de verdad. */
+function porPagar(mk){
+  return S.fijos.filter(f=>f.estado!=="cancelado" && f.manual &&
+    !S.movs.some(m=>m.fijoId===f.id && m.d.slice(0,7)===mk));
+}
+function porPagarC(mk){ return porPagar(mk).reduce((t,f)=>t+f.cC,0); }
+function porPagarVencidos(mk){
+  if(mk !== claveMes(new Date())) return porPagar(mk);
+  const hoy = new Date().getDate();
+  return porPagar(mk).filter(f=>f.dia <= hoy);
+}
 
 /* Días de finde ya pasados sin un solo registro. Un finde en cero real y
    uno sin anotar se ven igual en pantalla, y son lo contrario. */
@@ -695,6 +739,7 @@ function vistaHoy(){
   const ratio = S.cfg.liquidoC ? deuda / S.cfg.liquidoC : 0;
   const porFinde = rest>0 ? Math.max(0, Math.round(disp/rest)) : 0;
   const rul = ruleteos(mk);
+  const pp = porPagar(mk), ppVenc = porPagarVencidos(mk);
 
   /* héroe */
   let hero;
@@ -761,6 +806,12 @@ function vistaHoy(){
         '<button class="p" onclick="soltarDeuda(\''+x.id+'\')">Soltarlo</button>'+
       '</div></div>';
   });
+  if(ppVenc.length){
+    const cVenc = ppVenc.reduce((t,f)=>t+f.cC,0);
+    avisos += '<div class="aviso-bloque ambar">Ya pasó el día de <b>'+ppVenc.length+
+      (ppVenc.length===1?' fijo':' fijos')+'</b> que pagas tú · <b>'+fmt(cVenc)+'</b>. '+
+      'Márcalos pagados abajo, o la deuda de la tarjeta se ve más baja de lo que es.</div>';
+  }
   const rev = porRevisar(mk);
   if(rev.length){
     avisos += '<div class="aviso-bloque"><b>'+rev.length+(rev.length===1?' cargo automático':' cargos automáticos')+' este mes.</b> '+
@@ -790,6 +841,24 @@ function vistaHoy(){
     '<div class="fila"><div class="txt"><div class="t1">'+esc(c.n)+'</div>'+
     '<div class="t2">disponible de verdad</div></div>'+
     '<div class="mto num pos">'+fmt(s[c.id]||0)+'</div></div>').join("");
+
+  /* Por pagar: lo que sale de tu bolsillo el día que cobras. Es el número que
+     no existía: la tarjeta baja con el pago y vuelve a subir el mismo día. */
+  const porPagarBloque = pp.length ? '<div class="sect"><div class="sect-h">'+
+      '<div class="eyebrow">Por pagar</div>'+
+      '<div class="num" style="font-size:12px;color:var(--humo)">'+fmt(porPagarC(mk))+'</div></div>'+
+    '<div class="card">'+pp.slice().sort((a,b)=>b.cC-a.cC).map(f=>{
+      const c = cta(f.cta), venc = ppVenc.indexOf(f) > -1;
+      return '<div class="fila"><div class="txt">'+
+        '<div class="t1">'+esc(f.n)+(venc?'<span class="chip inv">toca</span>':'')+'</div>'+
+        '<div class="t2">día '+f.dia+' · '+(c?esc(c.n):"?")+
+          (f.compC?' · te devuelven '+fmt(f.compC):'')+'</div>'+
+        '<div class="acciones"><button class="p" onclick="pagarFijo(\''+f.id+'\')">Pagado</button>'+
+          '<button onclick="pagarFijoOtro(\''+f.id+'\')">Otro monto</button></div>'+
+        '</div><div class="mto num">'+fmt(f.cC)+'</div></div>';
+    }).join("")+'</div>'+
+    '<div class="mini">Ya están descontados de tu libre: son costo seguro. La deuda de la tarjeta no los tiene hasta que los marques pagados.</div>'+
+  '</div>' : "";
 
   /* junta y cuotas */
   const j = S.junta;
@@ -825,6 +894,7 @@ function vistaHoy(){
       '<div class="card">'+tarjetas+'</div>'+
       (liq?'<div class="card">'+liq+'</div>':'')+
     '</div>'+
+    porPagarBloque +
     (cuotas?'<div class="sect"><div class="eyebrow">Cuotas</div><div class="card" style="margin-top:10px">'+cuotas+'</div></div>':'')+
     (junta ?'<div class="sect"><div class="eyebrow">Junta</div><div class="card" style="margin-top:10px">'+junta+'</div></div>':'')+
     debenLinea +
@@ -1426,6 +1496,35 @@ window.fijoOtro = id => {
   guardar(); render();
   toast(cC ? "Corregido. Te deben <b>"+fmt(cC)+"</b> de ese cargo."
            : "Corregido. Si el cobro se repitió, reclámalo antes del próximo corte.");
+};
+
+/* Un fijo manual pagado: recién acá sube a la tarjeta. La fecha es hoy,
+   no el día teórico del fijo, porque lo que importa es cuándo salió la plata. */
+window.pagarFijo = id => {
+  const f = S.fijos.find(x=>x.id===id); if(!f) return;
+  const mk = claveMes(new Date());
+  if(S.meses[mk] && S.meses[mk].cerrado){ toast("Ese mes ya está cerrado."); return; }
+  if(S.movs.some(m=>m.fijoId===f.id && m.d.slice(0,7)===mk)){ render(); return; }
+  const mov = { id:nuevoId(), d:hoyISO(), ts:Date.now(), cC:f.cC, cur:S.cfg.cur,
+    tipo: f.ahorro ? "ahorro" : "gasto", cat:f.cat, cta:f.cta, cta2:null,
+    via:"transferencia", inv:0, ext:0, src:"manual", fijoId:f.id, rev:1, nota:f.n };
+  S.movs.push(mov);
+  const cC = abrirComp(mov);
+  guardar(); render();
+  toast(cC ? "Pagado. Te deben <b>"+fmt(cC)+"</b> de ese recibo." : "Pagado.", mov.id);
+};
+window.pagarFijoOtro = id => {
+  const f = S.fijos.find(x=>x.id===id); if(!f) return;
+  const v = prompt("¿Cuánto pagaste de "+f.n+"?", (f.cC/100).toFixed(2));
+  if(v===null) return;
+  const c = aC(v); if(c<=0) return;
+  window.pagarFijo(id);
+  const m = [...S.movs].reverse().find(x=>x.fijoId===id);
+  if(m && m.cC!==c){
+    m.cC = c; m.ed = 1;
+    S.deudas = (S.deudas||[]).filter(x=>x.movId!==m.id);   // se recalcula sobre el monto real
+    abrirComp(m); guardar(); render();
+  }
 };
 
 /* Cobros a personas */

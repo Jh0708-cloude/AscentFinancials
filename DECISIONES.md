@@ -3,7 +3,7 @@
 > Documento de traspaso. Si una conversación se corta o empiezas una nueva,
 > este archivo es la fuente de verdad. Léelo antes de proponer cambios.
 >
-> Última actualización: 2026-08-05 (rev. 4) · Estado: **v1 en uso** — PWA
+> Última actualización: 2026-08-05 (rev. 5) · Estado: **v1 en uso** — PWA
 > desplegada, Firebase conectado, paleta de AscentPeak aplicada.
 
 ---
@@ -78,9 +78,12 @@ US$ 23.76 en Amex.)
 
 Yape y Plin están asociados a estas tarjetas. **No son cuentas.**
 
-**El ciclo**: corte el 10-11, vence el 5 del mes siguiente. **Las tres vencen el
-mismo día**, así que toda la presión cae el 5, justo después del sueldo. Por eso
-el ruleteo se repite idéntico cada mes.
+**El ciclo real**: corte el 10-11, vence el 5 del mes siguiente — pero **él nunca
+llega al 5**. Paga las tres tarjetas el día que cobra, **entre el 25 y el 31**, y
+ese mismo día carga a la Amex los S/ 1,837.85 de fijos que paga a mano (junta,
+casa, cochera, seguro, internet, celular). La tarjeta baja y vuelve a subir en la
+misma jornada. No es ruleteo —no hay disposición— pero es la misma mecánica, y
+explica por qué el saldo nunca cierra aunque el pago sea grande.
 
 Las fechas son aproximadas ("días más, días menos"), así que `af_cta` las guarda
 como **referencia** y el cierre real se ancla al pago detectado, no al
@@ -197,24 +200,24 @@ Sin dato real no hay fecha real, y una fecha inventada se rompe.
 
 | Fijo | Su parte S/ | Nota |
 |---|---|---|
-| Junta | 1000.00 | **No es gasto: es ahorro ilíquido** |
-| Casa | 435.00 | |
-| Cochera | 150.00 | |
+| Junta | 1000.00 | **No es gasto: es ahorro ilíquido** · pago manual el día de cobro · Amex |
+| Casa | 435.00 | Pago manual el día de cobro · Amex |
+| Cochera | 150.00 | Pago manual el día de cobro · Amex |
 | Internet | 123.00 | Servicio propio, cargo entero tuyo |
 | ChatGPT | ~90.64 | US$ 24.17 |
 | Claude | ~88.50 | US$ 23.60 |
-| Vóley | ~65.00 | S/ 5 × 3 días × sem. **Hábito bueno, no se recorta** |
+| ~~Vóley~~ | — | **Cancelado 05/08/2026**: dejó de ir. La baranda sigue: la IA no puede proponer recortarlo, la decisión fue del usuario |
 | DirecTV TV | 61.50 | 50% con el hermano (cargo esperado 123) · agosto vino 144 y no se devuelve: la mitad de lo que venga es del hermano |
-| Seguro mamá | 50.00 | |
+| Seguro mamá | 50.00 | Pago manual el día de cobro · Amex |
 | Celular | 39.93 | 50% con el hermano (cargo total 79.85) |
 | Spotify | 32.90 | |
-| Gym Net | ~30.00 | Domingos y feriados |
+| ~~Gym Net~~ | — | **Cancelado 05/08/2026**: dejó de ir |
 | Degravamen | 15.44 | **Revisar de qué crédito viene** |
 | BitePal (anual) | ~9.17 | S/ 110 al año |
 | Cuota Mercadopago | 83.25 | Vía `af_cuota`, no `af_fijo`. Termina jul 2027 |
-| **Total** | **2,274.33** | |
+| **Total** | **2,180.66** | Tras cancelar vóley y gym |
 
-**Libre real: S/ 1,546.63 al mes.** Ese es el número de trabajo de la app.
+**Libre real: S/ 1,640.30 al mes.** Ese es el número de trabajo de la app.
 
 Aparte y variable: **API de Anthropic para AscentPeak** (~S/ 22/mes). Es costo de
 proyecto, no gasto personal.
@@ -298,6 +301,9 @@ no opina; muestra el número y la decisión es del usuario.
 | **Los compartidos se registran completos** | DirecTV y celular salen enteros de su tarjeta; el hermano devuelve después. Registrar la mitad hace que el saldo de la tarjeta no cuadre nunca. `af_fijo.cC` guarda el **cargo del banco** y `compC` lo que te devuelven; el libre del mes descuenta solo el neto. Los dos números en pantalla, ninguno "arreglado". |
 | **La parte del otro se abre como deuda al confirmar el cargo** | No al crearlo: antes de que el banco cobre no hay nada que cobrar. Sin esto, el cargo entero subía a la tarjeta, el libre descontaba la mitad y los ~S/ 101 del hermano no vivían en ningún lado: se cobraban de memoria. |
 | **`compC` es una proporción, no un monto** | La mitad del DirecTV es la mitad venga en 123 o en 144. Se guarda en soles sobre el cargo esperado y se aplica al cargo real, así el mes que el recibo cambia no hay que editar nada. |
+| **Automático y manual son cosas distintas** | Solo cinco fijos los cobra el banco solo (DirecTV, Claude, ChatGPT, Spotify, Degravamen). Los otros seis los paga él. La app no puede dar por hecho un cargo que nadie hizo: los manuales van a **«Por pagar»** y suben a la tarjeta el día que los marcas. Un saldo inventado es peor que uno incompleto. |
+| **«Por pagar» ya está descontado del libre** | Son costo seguro del mes desde el día 1, aunque la deuda de la tarjeta todavía no los tenga. Esperar a pagarlos para descontarlos haría que la primera quincena se vea rica y la segunda imposible. |
+| **Cancelar es `estado`, no borrar** | Vóley y gym salieron del cuadro sin perder los meses en que sí se pagaron. Borrarlos descuadraría cualquier mes cerrado que los incluya. |
 | **El cargo registrado le gana al fijo** | El fijo es lo que esperas; el movimiento es lo que pasó. Cuando el mes ya tiene el cargo, el libre usa el cargo real: agosto vino en 144 y el costo fue 72, no 61.50. Mientras no llegue, manda el plan. |
 | **Un reembolso nunca entra a una tarjeta de crédito** | Un ingreso sobre una tarjeta *sube* la deuda en `saldos()`. El cobro de un gasto pagado con Amex entra a la cuenta líquida; si de verdad fue a la tarjeta, se registra a mano como pago. |
 | **Mes cerrado es inmutable** | `af_mes` congela límite, gastado e ingreso. Cambiar el plan hoy **nunca** altera un mes cerrado. Es `tp` de AscentPeak. |
